@@ -1,0 +1,238 @@
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700;800;900&family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ======================================================================
+   BUILDWISE AETHER ULTRALUXE ENGINEERING SPECIFICATION (GOLD EDITION V5.0)
+   ====================================================================== */
+
+:root {
+  --bg-space: #0B0A08;
+  --bg-panel: rgba(21, 18, 13, 0.75);
+  --bg-input: #1C1710;
+  --grid-major: #33240F;
+  --grid-minor: rgba(51, 36, 15, 0.35);
+  --gold-core: #D4AF37;
+  --gold-light: #F5D67A;
+  --bronze-accent: #B8860B;
+  --text-main: #FFF8E7;
+  --text-secondary: #D9C7A0;
+  --gold-glow: rgba(212, 175, 55, 0.08);
+  --gold-glow-heavy: rgba(212, 175, 55, 0.25);
+  
+  /* Font Constants */
+  --font-display: 'Cinzel', serif;
+  --font-sans: 'Inter', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+* {
+  box-sizing: border-box;
+  selection-background: var(--gold-core);
+  selection-color: var(--bg-space);
+}
+
+body {
+  background-color: var(--bg-space) !important;
+  color: var(--text-main) !important;
+  font-family: var(--font-sans);
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden;
+  letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* 2. INFINITE ARCHITECTURAL BLUEPRINT GRID CANVAS BACKGROUND */
+.blueprint-viewport-container {
+  min-height: 100vh;
+  position: relative;
+  background-color: var(--bg-space);
+  /* Layered Grid Composition: Major (160px) and Minor (32px) grid vectors */
+  background-image:
+    linear-gradient(to right, var(--grid-major) 1.5px, transparent 1.5px),
+    linear-gradient(to bottom, var(--grid-major) 1.5px, transparent 1.5px),
+    linear-gradient(to right, var(--grid-minor) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-minor) 1px, transparent 1px);
+  background-size: 160px 160px, 160px 160px, 32px 32px, 32px 32px;
+  background-position: center top;
+  will-change: background-position;
+  transform: translateZ(0); /* Force GPU Layer Isolation */
+}
+
+/* Cinema Noise Vignette Overlay Texture Mapping */
+.blueprint-viewport-container::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.015'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* Ambient Radial Lighting Blueprint Mesh */
+.blueprint-radial-mesh {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100vw;
+  height: 1200px;
+  background: 
+    radial-gradient(circle at 50% 30%, rgba(212, 175, 55, 0.07) 0%, transparent 65%),
+    radial-gradient(circle at 50% 60%, rgba(184, 134, 11, 0.03) 0%, transparent 50%);
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* High-Contrast Perimeter Vignette Frame */
+.blueprint-vignette {
+  position: fixed;
+  inset: 0;
+  box-shadow: inset 0 0 120px rgba(0, 0, 0, 0.85);
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* Structural Max Width Constraints Matrix */
+.studio-content-width {
+  width: 100%;
+  max-width: 1200px;
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: 32px;
+  padding-right: 32px;
+  box-sizing: border-box;
+}
+
+/* 10. ADVANCED GLASSMORPHIC SUITE CARDS */
+.blueprint-card-slab {
+  background: var(--bg-panel);
+  backdrop-filter: blur(20px) saturate(120%);
+  -webkit-backdrop-filter: blur(20px) saturate(120%);
+  border: 1px solid rgba(212, 175, 55, 0.14);
+  border-radius: 24px;
+  padding: 48px;
+  margin-bottom: 48px;
+  box-shadow: 
+    0 30px 70px -25px rgba(0, 0, 0, 0.9),
+    0 0 40px -15px var(--gold-glow),
+    inset 0 1px 2px rgba(255, 248, 231, 0.05);
+  box-sizing: border-box;
+  transform: translateZ(0);
+  transition: border-color 0.4s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.blueprint-card-slab:hover {
+  border-color: rgba(212, 175, 55, 0.32);
+  box-shadow: 
+    0 40px 90px -30px rgba(0, 0, 0, 0.95),
+    0 0 50px -5px rgba(212, 175, 55, 0.18),
+    inset 0 1px 3px rgba(255, 248, 231, 0.08);
+}
+
+/* Premium Empty Matrix State Interlining */
+.blueprint-placeholder-state {
+  border: 1px dashed rgba(212, 175, 55, 0.15);
+  background: rgba(21, 18, 13, 0.25);
+  border-radius: 18px;
+  padding: 64px 32px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+/* 9. TERMINAL TEXTAREA INPUT INTERFACE ELEMENTS */
+.blueprint-textarea-terminal {
+  width: 100%;
+  height: 150px;
+  background-color: var(--bg-input);
+  border: 1px solid rgba(212, 175, 55, 0.16);
+  border-radius: 16px;
+  padding: 24px;
+  color: var(--text-main);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.7;
+  resize: none;
+  box-sizing: border-box;
+  display: block;
+  outline: none;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: inset 0 3px 10px rgba(0, 0, 0, 0.5);
+}
+
+.blueprint-textarea-terminal:focus {
+  border-color: var(--gold-core);
+  box-shadow: 
+    inset 0 3px 10px rgba(0, 0, 0, 0.5),
+    0 0 30px rgba(212, 175, 55, 0.25);
+  background-color: rgba(28, 23, 16, 0.9);
+}
+
+/* Custom Vector Progress Bar Track */
+.blueprint-progress-track {
+  width: 100%;
+  height: 4px;
+  background: rgba(212, 175, 55, 0.08);
+  border-radius: 100px;
+  overflow: hidden;
+  position: relative;
+}
+
+.blueprint-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, var(--bronze-accent), var(--gold-light), var(--gold-core));
+  width: 0%;
+  border-radius: 100px;
+}
+
+/* Luxury Interactive Pill Tags */
+.blueprint-interactive-pill {
+  background-color: rgba(28, 23, 16, 0.7);
+  border: 1px solid rgba(212, 175, 55, 0.18);
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 12px 24px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.blueprint-interactive-pill:hover {
+  border-color: var(--gold-core);
+  color: var(--gold-light);
+  background-color: rgba(212, 175, 55, 0.08);
+  transform: translateY(-1px);
+}
+
+/* Infinite Architectural Vertical Scroll Adjustments */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Premium Scrollbar Mechanics */
+::-webkit-scrollbar {
+  width: 10px;
+  background: var(--bg-space);
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-space);
+  border-left: 1px solid var(--grid-major);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(212, 175, 55, 0.2);
+  border-radius: 100px;
+  border: 2px solid var(--bg-space);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(212, 175, 55, 0.4);
+}

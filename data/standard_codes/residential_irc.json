@@ -1,0 +1,10 @@
+{
+  "code_edition": "2026_IRC_International_Residential_Code",
+  "residential": {
+    "min_room_dimension_ft": 7.0,
+    "min_ceiling_height_ft": 7.0,
+    "habitable_room_min_area_sqft": 70.0,
+    "kitchen_clearance_min_ft": 3.0,
+    "bathroom_ventilation_required": true
+  }
+}

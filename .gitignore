@@ -1,0 +1,105 @@
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage/
+htmlcov/
+run.txt
+
+
+# =========================
+# Virtual Environments
+# =========================
+.venv/
+venv/
+env/
+ENV/
+
+# =========================
+# Environment Variables
+# =========================
+.env
+.env.*
+
+# =========================
+# Node.js
+# =========================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# =========================
+# Build Files
+# =========================
+dist/
+build/
+frontend/dist/
+frontend/build/
+
+# =========================
+# Cache
+# =========================
+.cache/
+local_cache/
+memory_store/
+
+# =========================
+# VS Code
+# =========================
+.vscode/
+
+# =========================
+# JetBrains
+# =========================
+.idea/
+
+# =========================
+# OS Files
+# =========================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# =========================
+# Logs
+# =========================
+*.log
+
+# =========================
+# Temporary Files
+# =========================
+*.tmp
+*.temp
+*.bak
+
+# =========================
+# Zip / Compressed Files
+# =========================
+*.zip
+*.rar
+*.7z
+*.tar
+*.gz
+
+# =========================
+# Generated Python Files
+# =========================
+*.pyc
+
+# =========================
+# Misc
+# =========================
+*.swp
+*.swo
