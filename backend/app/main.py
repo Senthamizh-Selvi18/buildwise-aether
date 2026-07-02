@@ -1664,21 +1664,23 @@ def _extract_clues_from_prompt(prompt: str) -> Dict[str, Any]:
     elif re.search(r'\bmedium\s*(?:natural\s*)?light\b|\bmoderate\s*(?:sun|light)\b', p):
         extracted["natural_lighting"] = "medium"
 
-    _orientation_kw = (
-        "north east", "northeast", "north west", "northwest", "south east", "southeast",
-        "south west", "southwest", "north", "south", "east", "west",
+        _orientation_kw = (
+        "north east", "northeast", "north west", "northwest",
+        "south east", "southeast", "south west", "southwest",
+        "north", "south", "east", "west",
     )
-     for kw in _orientation_kw:
-    pattern = kw.replace(" ", r"[\s-]?")
 
-    if re.search(rf"\b{pattern}\b\s*(?:facing|face)?", p) and (
-        f"{kw} facing" in p
-        or f"faces {kw}" in p
-        or f"facing {kw}" in p
-        or re.search(rf"\b{kw}\b", p)
-    ):
-        extracted["room_orientation"] = kw
-        break
+    for kw in _orientation_kw:
+        pattern = kw.replace(" ", r"[\s-]?")
+
+        if re.search(rf"\b{pattern}\b\s*(?:facing|face)?", p) and (
+            f"{kw} facing" in p
+            or f"faces {kw}" in p
+            or f"facing {kw}" in p
+            or re.search(rf"\b{kw}\b", p)
+        ):
+            extracted["room_orientation"] = kw
+            break
 
     _occ_bits = []
     if _wants(p, "child", "kid", "kids", "children"):
