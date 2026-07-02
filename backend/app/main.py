@@ -1668,10 +1668,17 @@ def _extract_clues_from_prompt(prompt: str) -> Dict[str, Any]:
         "north east", "northeast", "north west", "northwest", "south east", "southeast",
         "south west", "southwest", "north", "south", "east", "west",
     )
-    for kw in _orientation_kw:
-        if re.search(rf'\b{kw.replace(" ", r"[\s-]?")}\b\s*(?:facing|face)?', p) and (f"{kw} facing" in p or f"faces {kw}" in p or f"facing {kw}" in p or re.search(rf'\b{kw}\b', p)):
-            extracted["room_orientation"] = kw
-            break
+     for kw in _orientation_kw:
+    pattern = kw.replace(" ", r"[\s-]?")
+
+    if re.search(rf"\b{pattern}\b\s*(?:facing|face)?", p) and (
+        f"{kw} facing" in p
+        or f"faces {kw}" in p
+        or f"facing {kw}" in p
+        or re.search(rf"\b{kw}\b", p)
+    ):
+        extracted["room_orientation"] = kw
+        break
 
     _occ_bits = []
     if _wants(p, "child", "kid", "kids", "children"):
