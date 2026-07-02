@@ -258,7 +258,7 @@ export default function App() {
 
       // requires_clarification (current_answers carries those answers back).
 
-      const response = await fetch('http://127.0.0.1:8000/api/generate', {
+      const response = await fetch('https://buildwise-aether-backend.onrender.com/api/generate', {
 
         method: 'POST',
 

@@ -23,7 +23,7 @@ export const useAetherState = () => {
     setLoading(true);
     setQuestions([]);
     try {
-      const res = await fetch('https://buildwise-aether-backend.onrender.com', {
+      const res = await fetch('https://buildwise-aether-backend.onrender.com/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
