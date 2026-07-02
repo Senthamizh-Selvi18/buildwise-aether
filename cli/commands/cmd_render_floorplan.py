@@ -4,7 +4,7 @@ import json
 def execute_render_floorplan(target_prompt: str) -> None:
     print(f"\n[CLI_RENDERER] Transmitting execution stream parameter to system pipeline matrix hook...")
     try:
-        response = httpx.post("http://localhost:8000/api/plan", json={"prompt": target_prompt}, timeout=20.0)
+        response = httpx.post("https://buildwise-aether-backend.onrender.com", json={"prompt": target_prompt}, timeout=20.0)
         if response.status_code != 200:
             print(f"[CLI_ERROR] Core service layer returned structural exception error flag: {response.status_code}")
             return
