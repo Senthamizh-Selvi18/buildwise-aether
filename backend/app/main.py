@@ -1005,6 +1005,8 @@ async def generate_floorplan(request: GenerationRequest):
         # one pooja room and 2 floors" generate immediately instead of
         # re-asking the user for things they already said.
         prompt_clues = _extract_clues_from_prompt(request.user_prompt)
+        print("Prompt:", request.user_prompt)
+        print("Extracted:", prompt_clues)
 
         clues = {
             "plot_width": _coerce_numeric(request.plot_width or session["answers"].get("plot_width") or prompt_clues.get("plot_width")),
