@@ -1665,9 +1665,9 @@ def _extract_clues_from_prompt(prompt: str) -> Dict[str, Any]:
         extracted["natural_lighting"] = "medium"
 
         _orientation_kw = (
-        "north east", "northeast", "north west", "northwest",
-        "south east", "southeast", "south west", "southwest",
-        "north", "south", "east", "west",
+            "north east", "northeast", "north west", "northwest",
+            "south east", "southeast", "south west", "southwest",
+            "north", "south", "east", "west",
     )
 
     for kw in _orientation_kw:
