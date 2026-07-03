@@ -1,291 +1,488 @@
-import math
-from typing import List, Dict, Any, Tuple, Optional
-from backend.app.geometry.models import BuildingGeometry, Room, Wall, Point2D, LineSegment
-from backend.app.geometry.layout_templates import FootprintTemplate
-from backend.app.geometry.door_generator import Door
-from backend.app.geometry.window_generator import Window
-from backend.app.geometry.dimension_generator import DimensionAnnotation
+import uuid
+from typing import List, Tuple
+from backend.app.core.geometry.models import (
+    RoomGeometry, WallGeometry, PortalGeometry, DimensionLine
+)
+
 
 class SVGRenderer:
     """
-    Deterministic architectural vector rendering engine. Transforms calculated
-    building geometry matrices directly into production-grade CAD-style SVG floorplans.
+    Renders purely mathematical geometry objects into a professional architectural SVG string.
+    Implements native alpha channels and precise path drawing for CAD-accurate floorplans.
+
+    Dark CAD theme — matches the BuildWise Aether UI exactly:
+      • Dark olive canvas  (#0d0d06) with a full-bleed grid (#2a2a1a) that
+        extends across the whole viewbox, NOT clipped to the plot polygon.
+      • Plot boundary drawn as the ACTUAL polygon (rectangle, L/T/U shape, or
+        any custom irregular outline) in a gold stroke (#d4af37) so the true
+        silhouette is always clearly visible against the dark background.
+      • Semi-transparent room fills (opacity 0.22) so the dark background
+        shows through and rooms read as coloured zones, not opaque blocks.
+      • Gold / amber exterior walls (#c8a84b) and dark-gold interior partitions
+        (#5a4f1e) — both readable against the dark canvas.
+      • Thick cyan window bars (#0ea5e9, stroke-width 2.0) matching the
+        prominent window symbols visible in the reference screenshot.
+      • Door gap cleared with the canvas colour (#0d0d06) so there is a clean
+        break in the wall line; door panels drawn in gold (#c8a84b); swing arc
+        in muted gold (#8a7a3a).
+      • Dimension lines, arrows, and labels all in muted gold (#8a7a3a).
+      • North compass drawn in light cream (#e8dfc8) for readability.
     """
 
-    def __init__(self, scale_factor: float = 0.05, padding: float = 2000.0):
+    # ── Visual constants ──────────────────────────────────────────────────────
+
+    # Canvas / theme
+    BG_COLOR        = "#0d0d06"   # dark olive-black canvas
+    GRID_COLOR      = "#2a2a1a"   # subtle dark grid lines
+
+    # Rooms
+    FILL_OPACITY    = "0.22"      # semi-transparent room fills
+    ROOM_TEXT_COLOR = "#e8dfc8"   # warm cream for room name
+    AREA_TEXT_COLOR = "#8a7a3a"   # muted gold for sq-ft label
+
+    # Plot boundary
+    PLOT_STROKE     = "#d4af37"   # gold polygon outline
+    PLOT_SW         = "0.35"
+
+    # Walls
+    EXT_WALL_COLOR  = "#c8a84b"   # gold exterior shell
+    INT_WALL_COLOR  = "#5a4f1e"   # dark-gold interior partitions
+
+    # Windows
+    WIN_COLOR       = "#0ea5e9"   # bright cyan
+    WIN_SW          = 2.0         # thick bar matching screenshot
+
+    # Doors
+    DOOR_CLEAR      = "#0d0d06"   # matches canvas (clears wall gap)
+    DOOR_CLEAR_SW   = "2.2"
+    DOOR_PANEL_COL  = "#c8a84b"   # gold door panel
+    DOOR_PANEL_SW   = "0.8"
+    DOOR_ARC_COL    = "#8a7a3a"   # muted-gold swing arc
+    DOOR_ARC_SW     = "0.3"
+
+    # Dimensions / annotations
+    DIM_COLOR       = "#8a7a3a"
+    DIM_SW          = "0.2"
+    DIM_FONT_SZ     = "1.4"
+    COMPASS_COLOR   = "#e8dfc8"
+
+    # ── Text-fit constants ────────────────────────────────────────────────────
+    # NOTE on units: these are SVG font-size units in the SAME coordinate
+    # space as the floor plan itself (feet), not screen pixels. On a
+    # typical ~30x40ft plot rendered into a normal-width container, 1 unit
+    # here is roughly 10-12 actual screen pixels. The previous floors
+    # (_MIN_FONT=0.42, area=0.3) worked out to ~4-5px and ~3-4px on
+    # screen -- technically "fitted" inside a room's box, but not
+    # actually readable. Raised to real legibility floors below.
+    _CHAR_WIDTH_RATIO = 0.62
+    _LINE_HEIGHT_RATIO = 1.15
+    _MAX_FONT = 2.0
+    _MIN_FONT = 1.05        # room name floor -> stays readable at normal render sizes
+    _AREA_MIN_FONT = 0.75   # dimensions/area floor -> smaller than name, still legible
+    _CLIP_MARGIN = 0.5      # ft of clip-path tolerance around each room's own
+                             # bbox, so a name held at the legibility floor
+                             # in a too-small room is allowed to spill a
+                             # little rather than being invisibly clipped
+
+    # ── Internal helpers ──────────────────────────────────────────────────────
+
+    @staticmethod
+    def _wrap_words_only(name: str, max_chars_per_line: int):
+        """Greedy word-wrap that NEVER splits a word mid-way. Returns None
+        if any single word alone is longer than max_chars_per_line, so the
+        caller can try a smaller font (more chars fit per line) before
+        resorting to a hard character break."""
+        max_chars_per_line = max(2, max_chars_per_line)
+        words = name.split() or [name]
+        if any(len(w) > max_chars_per_line for w in words):
+            return None
+        lines: List[str] = []
+        current = ""
+        for w in words:
+            candidate = (current + " " + w).strip()
+            if len(candidate) <= max_chars_per_line:
+                current = candidate
+            else:
+                if current:
+                    lines.append(current)
+                current = w
+        if current:
+            lines.append(current)
+        return lines or [name]
+
+    @staticmethod
+    def _wrap_text_to_width(name: str, max_chars_per_line: int) -> List[str]:
+        """Greedy word-wrap to a target character width. If a single word
+        alone is still wider than a full line (common for compound room
+        names like 'ATTACHED BATHROOM' once it's down to one word per
+        line, or any long single-word name in a very small room), hard-
+        breaks that word into fixed-width chunks so text still fits
+        within the available width instead of overflowing indefinitely."""
+        max_chars_per_line = max(2, max_chars_per_line)
+        words = name.split() or [name]
+        lines: List[str] = []
+        current = ""
+        for w in words:
+            while len(w) > max_chars_per_line:
+                if current:
+                    lines.append(current)
+                    current = ""
+                lines.append(w[:max_chars_per_line])
+                w = w[max_chars_per_line:]
+            candidate = (current + " " + w).strip()
+            if len(candidate) <= max_chars_per_line:
+                current = candidate
+            else:
+                if current:
+                    lines.append(current)
+                current = w
+        if current:
+            lines.append(current)
+        return lines or [name]
+
+    @staticmethod
+    def _fit_room_text(name: str, area_label: str, room_w: float, room_h: float):
         """
-        Initializes the rendering canvas limits.
-        scale_factor: Modulates geometric units into balanced viewport layout spaces.
-        padding: Standard margins applied to avoid line clipping along outer boundary edges.
+        Computes a font size + line layout that genuinely adapts to the
+        room's own available area: big rooms get a big single-line name,
+        small rooms wrap onto more (smaller) lines, and the size search
+        never drops below a real legibility floor. Unlike a fixed
+        line-count search, this tries progressively smaller font sizes
+        and re-wraps the name to fit the resulting width at each size,
+        so the layout always matches what actually fits rather than
+        guessing a line count first.
+
+        Word-boundary wrapping (never splitting a word) is always tried
+        first, across the whole font range down to the legibility floor,
+        before a hard mid-word character break is used -- so a slightly
+        smaller, cleanly-wrapped label is preferred over a bigger one
+        that chops a word in half.
+
+        The area/dimension label still only appears when there's
+        genuinely enough leftover space for it to also be legible --
+        that's what makes tiny rooms show name-only, adjusting
+        automatically to the space available.
+
+        Returns:
+            (name_lines: List[str], name_font: float,
+             area_font: float, show_area: bool)
         """
-        self.scale: float = scale_factor
-        self.pad: float = padding
+        pad = min(0.3, room_w * 0.06, room_h * 0.06)
+        avail_w = max(room_w - 2 * pad, 0.6)
+        avail_h = max(room_h - 2 * pad, 0.6)
+        cw = SVGRenderer._CHAR_WIDTH_RATIO
+        lh = SVGRenderer._LINE_HEIGHT_RATIO
+        min_font = SVGRenderer._MIN_FONT
 
-    def _coord(self, pt: Point2D) -> Tuple[float, float]:
-        """Translates real structural millimeters into clean pixel spacing offsets for the SVG layout canvas."""
-        return (pt.x + self.pad) * self.scale, (pt.y + self.pad) * self.scale
+        # ── Step 1: search downward from the largest comfortable size to
+        # the legibility floor, using word-boundary-only wrapping. First
+        # (largest) size that both wraps cleanly AND fits the available
+        # height wins -- this is what makes the label scale down smoothly
+        # as the room shrinks, instead of jumping straight to a
+        # worst-case tiny font or breaking a word unnecessarily.
+        best = None
+        font = SVGRenderer._MAX_FONT
+        while font >= min_font - 1e-9:
+            max_chars = max(2, int(avail_w / (cw * font)))
+            lines = SVGRenderer._wrap_words_only(name, max_chars)
+            if lines is not None:
+                block_h = len(lines) * font * lh
+                if block_h <= avail_h * 0.92:
+                    best = (font, lines)
+                    break
+            font = round(font - 0.05, 2)
 
-    def render_room_polygon(self, room: Room, paint_color: str, stroke_color: str) -> str:
-        """Translates complex structural polygon meshes into a clean filled SVG polygon vector path."""
-        if not room.polygon:
-            return ""
-        
-        pts_str = " ".join(f"{self._coord(p)[0]},{self._coord(p)[1]}" for p in room.polygon)
-        
-        # Calculate polygon center to center room text cleanly
-        x_coords = [p.x for p in room.polygon]
-        y_coords = [p.y for p in room.polygon]
-        cx, cy = (min(x_coords) + max(x_coords)) / 2.0, (min(y_coords) + max(y_coords)) / 2.0
-        txt_x, txt_y = self._coord(Point2D(x=cx, y=cy))
+        if best is None:
+            # No clean word-boundary wrap fits even at the legibility
+            # floor (e.g. a single long word in a very small room) --
+            # fall back to a hard character break AT the floor size, and
+            # accept that it may spill slightly past the room's own
+            # bounds. The per-room clip-path tolerance (_CLIP_MARGIN)
+            # makes that spill actually visible instead of being
+            # silently cropped away.
+            max_chars = max(2, int(avail_w / (cw * min_font)))
+            best = (min_font, SVGRenderer._wrap_text_to_width(name, max_chars))
 
-        svg = f'  <polygon points="{pts_str}" fill="{paint_color}" stroke="{stroke_color}" stroke-width="1.5" opacity="0.85" />\n'
-        # Append clear, scannable architectural text labeling inside the room boundary
-        svg += f'  <text x="{txt_x}" y="{txt_y}" font-family="Arial, Helvetica, sans-serif" font-size="14" font-weight="bold" fill="#2C3E50" text-anchor="middle" dominant-baseline="middle">{room.id.split("_")[0].upper()}</text>\n'
-        return svg
+        font, lines = best
+        font = round(font, 2)
 
-    def render_wall(self, wall: Wall) -> str:
-        """Renders structural wall lines with distinct stroke weights to differentiate exterior and interior components."""
-        x1, y1 = self._coord(wall.segment.start)
-        x2, y2 = self._coord(wall.segment.end)
-        
-        # Apply thicker strokes for external envelope segments to maintain blueprint conventions
-        if wall.wall_type.value == "exterior":
-            stroke_w = 4.0
-            color = "#111111"
-        else:
-            stroke_w = 2.0
-            color = "#555555"
+        # ── Step 2: fit the area/dimension label into whatever vertical
+        # space is left below the name. Only shown once it can also sit
+        # at or above its own legibility floor -- otherwise the room is
+        # simply too small for dimensions and shows the name alone.
+        name_block_h = len(lines) * font * lh
+        remaining_h = avail_h - name_block_h
+        show_area = False
+        area_font = 0.0
+        if remaining_h >= SVGRenderer._AREA_MIN_FONT * lh:
+            area_font = min(font * 0.7, remaining_h / lh, avail_w / (max(len(area_label), 1) * cw))
+            if area_font >= SVGRenderer._AREA_MIN_FONT:
+                area_font = round(area_font, 2)
+                show_area = True
 
-        return f'  <line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="{color}" stroke-width="{stroke_w}" stroke-linecap="round" />\n'
+        return lines, font, area_font, show_area
 
-    def render_door(self, door: Door) -> str:
-        """Renders highly descriptive CAD door openings complete with linear panels and 90-degree swing arc vectors."""
-        x1, y1 = self._coord(door.start_point)
-        x2, y2 = self._coord(door.end_point)
-        
-        dx = door.end_point.x - door.start_point.x
-        dy = door.end_point.y - door.start_point.y
-        length = math.hypot(dx, dy)
-        
-        if length == 0:
-            return ""
 
-        ux, uy = dx / length, dy / length
-        
-        # Compute the open door panel geometry projecting outwards perpendicular at 90 degrees
-        px = door.start_point.x - uy * length
-        py = door.start_point.y + ux * length
-        x_p, y_p = self._coord(Point2D(x=px, y=py))
+    # ── Public render entry point ─────────────────────────────────────────────
 
-        # Clear structural aperture guide lines
-        svg = f'  \n'
-        svg += f'  <line x1="{x1}" y1="{y1}" x2="{x_p}" y2="{y_p}" stroke="#C0392B" stroke-width="2" />\n'
-        
-        # Generate the architectural circular sweep projection path
-        r_px = length * self.scale
-        svg += f'  <path d="M {x2} {y2} A {r_px} {r_px} 0 0 0 {x_p} {y_p}" fill="none" stroke="#C0392B" stroke-width="1.2" stroke-dasharray="3,3" />\n'
-        return svg
-
-    def render_window(self, window: Window) -> str:
-        """Renders standard architectural parallel multi-line frame markers representing window placements."""
-        x1, y1 = self._coord(window.start_point)
-        x2, y2 = self._coord(window.end_point)
-        
-        dx = window.end_point.x - window.start_point.x
-        dy = window.end_point.y - window.start_point.y
-        length = math.hypot(dx, dy)
-        
-        if length == 0:
-            return ""
-
-        ux, uy = dx / length, dy / length
-        offset_distance = 60.0  # Separate framing panes by a 60mm offset gap
-        
-        ox = -uy * offset_distance
-        oy = ux * offset_distance
-
-        w1_s_x, w1_s_y = self._coord(Point2D(x=window.start_point.x + ox, y=window.start_point.y + oy))
-        w1_e_x, w1_e_y = self._coord(Point2D(x=window.end_point.x + ox, y=window.end_point.y + oy))
-        
-        w2_s_x, w2_s_y = self._coord(Point2D(x=window.start_point.x - ox, y=window.start_point.y - oy))
-        w2_e_x, w2_e_y = self._coord(Point2D(x=window.end_point.x - ox, y=window.end_point.y - oy))
-
-        svg = f'  \n'
-        svg += f'  <line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="#2980B9" stroke-width="1" />\n'
-        svg += f'  <line x1="{w1_s_x}" y1="{w1_s_y}" x2="{w1_e_x}" y2="{w1_e_y}" stroke="#2980B9" stroke-width="1.5" />\n'
-        svg += f'  <line x1="{w2_s_x}" y1="{w2_s_y}" x2="{w2_e_x}" y2="{w2_e_y}" stroke="#2980B9" stroke-width="1.5" />\n'
-        
-        # Add quick hash marks for standard ventilators
-        if window.window_type == "VENTILATOR":
-            cx, cy = self._coord(window.center_point)
-            svg += f'  <line x1="{cx - 5}" y1="{cy - 5}" x2="{cx + 5}" y2="{cy + 5}" stroke="#2980B9" stroke-width="1" />\n'
-            
-        return svg
-
-    def render_dimensions(self, annotations: List[Dict[str, Any]]) -> str:
-        """Draws dimension line spans, tick marks, and legible distance labels directly from computed inputs."""
-        svg = "  \n"
-        for dim in annotations:
-            # Parse coordinate positions from input mappings safely
-            s_pt = Point2D(x=dim["start_point"]["x"], y=dim["start_point"]["y"])
-            e_pt = Point2D(x=dim["end_point"]["x"], y=dim["end_point"]["y"])
-            t_pt = Point2D(x=dim["text_position"]["x"], y=dim["text_position"]["y"])
-            
-            x1, y1 = self._coord(s_pt)
-            x2, y2 = self._coord(e_pt)
-            tx, ty = self._coord(t_pt)
-            
-            val_str = dim.get("formatted_text", f"{dim['value']} mm")
-
-            # Main Dimension Line
-            svg += f'  <line x1="{x1}" y1="{y1}" x2="{x2}" y2="{y2}" stroke="#7F8C8D" stroke-width="1" />\n'
-            # Left Tick
-            svg += f'  <line x1="{x1 - 4}" y1="{y1 + 4}" x2="{x1 + 4}" y2="{y1 - 4}" stroke="#7F8C8D" stroke-width="1.5" />\n'
-            # Right Tick
-            svg += f'  <line x1="{x2 - 4}" y1="{y1 + 4}" x2="{x2 + 4}" y2="{y1 - 4}" stroke="#7F8C8D" stroke-width="1.5" />\n'
-            # Text Value String Label
-            svg += f'  <text x="{tx}" y="{ty}" font-family="Courier, monospace" font-size="11" fill="#7F8C8D" text-anchor="middle" dominant-baseline="middle">{val_str}</text>\n'
-            
-        return svg
-
-    def render_plot(self, template: FootprintTemplate) -> str:
-        """Renders bounding boundary profiles along with layout setback tracking references."""
-        x0, y0 = self._coord(Point2D(x=0.0, y=0.0))
-        xw, yw = self._coord(Point2D(x=template.site_width_mm, y=template.site_length_mm))
-        
-        w_px = xw - x0
-        h_px = yw - y0
-
-        svg = "  \n"
-        svg += f'  <rect x="{x0}" y="{y0}" width="{w_px}" height="{h_px}" fill="none" stroke="#27AE60" stroke-width="2.5" stroke-dasharray="8,4" />\n'
-        
-        # Map internal building limit guides inside setback boundaries
-        x_sb, y_sb = self._coord(Point2D(x=template.left_setback_mm, y=template.rear_setback_mm))
-        xw_sb, yw_sb = self._coord(Point2D(x=template.site_width_mm - template.right_setback_mm, y=template.site_length_mm - template.front_setback_mm))
-        
-        svg += f'  <rect x="{x_sb}" y="{y_sb}" width="{xw_sb - x_sb}" height="{yw_sb - y_sb}" fill="none" stroke="#BDC3C7" stroke-width="1" stroke-dasharray="4,4" />\n'
-        return svg
-
-    def render_title_block(self, floor_idx: int, width: float, height: float) -> str:
-        """Injects a minimalist blueprint metadata card block directly inside bottom-right workspace limits."""
-        bx = width - 260.0
-        by = height - 130.0
-        
-        svg = "  \n"
-        svg += f'  <g transform="translate({bx}, {by})">\n'
-        svg += '    <rect width="240" height="110" fill="#FFFFFF" stroke="#2C3E50" stroke-width="1.5" rx="4" />\n'
-        svg += f'    <text x="15" y="25" font-family="Arial" font-size="13" font-weight="bold" fill="#2C3E50">BUILDWISE AETHER ENGINE</text>\n'
-        svg += f'    <text x="15" y="48" font-family="Arial" font-size="11" fill="#7F8C8D">Floorplan: Level 0{floor_idx} Blueprint</text>\n'
-        svg += '    <text x="15" y="68" font-family="Arial" font-size="11" fill="#7F8C8D">Scale: 1 : 20 Metric (Metric/Imperial)</text>\n'
-        svg += '    <text x="15" y="88" font-family="Arial" font-size="10" fill="#95A5A6" font-style="italic">Project Date: Year 2026</text>\n'
-        svg += '  </g>\n'
-        return svg
-
-    def render_scale(self, x: float, y: float) -> str:
-        """Draws a clean mathematical pixel distance layout ruler block inside the frame."""
-        svg = "  \n"
-        svg += f'  <g transform="translate({x}, {y})">\n'
-        svg += '    <line x1="0" y1="0" x2="100" y2="0" stroke="#2C3E50" stroke-width="3" />\n'
-        svg += '    <line x1="0" y1="-4" x2="0" y2="4" stroke="#2C3E50" stroke-width="1.5" />\n'
-        svg += '    <line x1="50" y1="-4" x2="50" y2="4" stroke="#2C3E50" stroke-width="1.5" />\n'
-        svg += '    <line x1="100" y1="-4" x2="100" y2="4" stroke="#2C3E50" stroke-width="1.5" />\n'
-        svg += '    <text x="0" y="-8" font-family="Arial" font-size="9" fill="#2C3E50" text-anchor="middle">0m</text>\n'
-        svg += '    <text x="50" y="-8" font-family="Arial" font-size="9" fill="#2C3E50" text-anchor="middle">1.0m</text>\n'
-        svg += '    <text x="100" y="-8" font-family="Arial" font-size="9" fill="#2C3E50" text-anchor="middle">2.0m</text>\n'
-        svg += '  </g>\n'
-        return svg
-
-    def render_north_arrow(self, x: float, y: float) -> str:
-        """Plots a minimalist, high-contrast structural compass symbol indexing directional orientation."""
-        svg = "  \n"
-        svg += f'  <g transform="translate({x}, {y})">\n'
-        svg += '    <circle cx="0" cy="0" r="18" fill="none" stroke="#2C3E50" stroke-width="1.2" />\n'
-        svg += '    <polygon points="0,-22 -6,-4 0,-10" fill="#2C3E50" />\n'
-        svg += '    <polygon points="0,-22 6,-4 0,-10" fill="#BDC3C7" />\n'
-        svg += '    <text x="0" y="28" font-family="Arial" font-size="11" font-weight="bold" fill="#2C3E50" text-anchor="middle">N</text>\n'
-        svg += '  </g>\n'
-        return svg
-
-    def render_floor(
-        self, 
-        floor_idx: int, 
-        building: BuildingGeometry, 
-        template: FootprintTemplate,
-        doors: List[Door], 
-        windows: List[Window], 
-        dimensions: List[Dict[str, Any]], 
-        paint_map: Dict[str, Dict[str, str]]
+    @staticmethod
+    def render(
+        plot_w: float,
+        plot_d: float,
+        rooms: List[RoomGeometry],
+        walls: List[WallGeometry],
+        portals: List[PortalGeometry],
+        dimensions: List[DimensionLine],
+        plot_points: List[Tuple[float, float]] = None,
     ) -> str:
-        """Compiles individual component nodes into a unified, responsive SVG file layout string."""
-        if floor_idx >= len(building.floors):
-            return ""
+        # Fall back to a plain rectangle if no polygon was supplied so this
+        # renderer stays fully backward-compatible with rectangular plots.
+        if not plot_points:
+            plot_points = [(0, 0), (plot_w, 0), (plot_w, plot_d), (0, plot_d)]
 
-        floor_data = building.floors[floor_idx]
-        
-        # Calculate dynamic Canvas boundary fields wrapping around target template structures
-        max_canvas_w = (template.site_width_mm + (self.pad * 2.0)) * self.scale
-        max_canvas_h = (template.site_length_mm + (self.pad * 2.0)) * self.scale
+        # ── Per-render unique id namespace ──────────────────────────────────
+        # Every floor's SVG is embedded inline into the SAME html document
+        # (multiple floors x multiple layout options on one page). SVG/HTML
+        # ids must be unique across the WHOLE document, not just within one
+        # <svg>. Before this fix, every render() call reused identical ids
+        # ("arrow", "cad_grid", "roomClip0", "roomClip1", ...), so
+        # url(#roomClip0) on, say, the First Floor SVG resolved to the
+        # FIRST "roomClip0" anywhere in the page -- the Ground Floor's --
+        # clipping First Floor room text through a rectangle sized for a
+        # totally different room. Text positioned outside that borrowed
+        # rectangle simply vanished, which is exactly the "only one room
+        # shows a label" symptom. Suffixing every id (and every reference
+        # to it) with a fresh uid per render() call makes ids globally
+        # unique so each floor's clip-paths/markers/patterns only ever
+        # resolve to their own definitions.
+        uid = uuid.uuid4().hex[:8]
+        arrow_id = f"arrow-{uid}"
+        grid_id = f"cad_grid-{uid}"
 
-        # Open structural wrapper nodes
-        svg_output = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {max_canvas_w} {max_canvas_h}" width="100%" height="100%" style="background-color: #FAFAFA;">\n'
-        svg_output += f'  <style> text {{ select-style: none; cursor: default; }} </style>\n'
-        
-        # Step 1: Render structural template boundaries
-        svg_output += self.render_plot(template)
+        poly_id = "plotBoundary"
+        points_attr = " ".join(f"{px},{py}" for px, py in plot_points)
+        BG  = SVGRenderer.BG_COLOR
+        vW  = plot_w + 40   # total viewbox width  (20 px margin each side)
+        vH  = plot_d + 40   # total viewbox height
 
-        # Step 2: Render polygonal room structures complete with layout color fills
-        for room in floor_data.rooms:
-            style = paint_map.get(room.id, {"fill": "#F2F4F4", "stroke": "#7F8C8D"})
-            svg_output += self.render_room_polygon(room, style["fill"], style["stroke"])
+        # ── 1. SVG header + defs ────────────────────────────────────────────
+        svg = (
+            f'<svg viewBox="-20 -20 {vW} {vH}" width="100%" height="100%" '
+            f'xmlns="http://www.w3.org/2000/svg" style="background:{BG}">'
+        )
 
-        # Step 3: Draw structural physical walls over background fills
-        if floor_data.rooms:
-            for wall in floor_data.rooms[0].walls:
-                svg_output += self.render_wall(wall)
+        # Solid dark canvas fill
+        svg += f'<rect x="-20" y="-20" width="{vW}" height="{vH}" fill="{BG}"/>'
 
-        # Step 4: Layer architectural aperture nodes over structural openings
-        floor_doors = [d for d in doors if d.floor == floor_idx]
-        for door in floor_doors:
-            svg_output += self.render_door(door)
+        # Defs: arrow marker, grid pattern, per-room clip-paths added inline
+        svg += (
+            f'<defs>'
+            f'<marker id="{arrow_id}" viewBox="0 0 10 10" refX="5" refY="5" '
+            f'markerWidth="4" markerHeight="4" orient="auto-start-reverse">'
+            f'<path d="M 0 0 L 10 5 L 0 10 z" fill="{SVGRenderer.DIM_COLOR}"/>'
+            f'</marker>'
+            f'<pattern id="{grid_id}" width="2" height="2" patternUnits="userSpaceOnUse">'
+            f'<path d="M 2 0 L 0 0 0 2" fill="none" '
+            f'stroke="{SVGRenderer.GRID_COLOR}" stroke-width="0.05"/>'
+            f'</pattern>'
+            f'</defs>'
+        )
 
-        floor_windows = [w for w in windows if w.floor == floor_idx]
-        for window in floor_windows:
-            svg_output += self.render_window(window)
+        # ── 2. Full-bleed grid (covers entire canvas, NOT clipped to plot) ──
+        # This matches the reference screenshot where the grid is visible in
+        # the margin area outside the plot polygon as well.
+        svg += (
+            f'<rect x="-20" y="-20" width="{vW}" height="{vH}" '
+            f'fill="url(#{grid_id})"/>'
+        )
 
-        # Step 5: Embed technical annotation dimension layers
-        floor_dims = [d for d in dimensions if d["floor"] == floor_idx or d["associated_object"] == "PLOT"]
-        svg_output += self.render_dimensions(floor_dims)
+        # ── 3. Room fills & text labels ─────────────────────────────────────
+        for idx, r in enumerate(rooms):
+            b            = r.bbox
+            name         = r.name.upper()
+            area_val     = round(b.area) if b.area is not None else 0
+            dim_w        = round(b.width, 1)
+            dim_h        = round(b.height, 1)
+            area_label   = f"{dim_w}' × {dim_h}' · {area_val} SQ.FT"
+            room_clip_id = f"roomClip{idx}-{uid}"
+            cm = SVGRenderer._CLIP_MARGIN
 
-        # Step 6: Render administrative layout widget accessories
-        svg_output += self.render_north_arrow(50.0 + (self.pad * self.scale), 60.0 + (self.pad * self.scale))
-        svg_output += self.render_scale(50.0 + (self.pad * self.scale), max_canvas_h - 40.0)
-        svg_output += self.render_title_block(floor_idx, max_canvas_w, max_canvas_h)
+            # Per-room clip-path prevents label bleeding into walls /
+            # neighbours, but is intentionally slightly larger than the
+            # room's own bbox (by _CLIP_MARGIN) so text held at the
+            # legibility floor in an undersized room can spill a little
+            # instead of being invisibly cropped. The FILL rect below
+            # stays at the exact bbox -- only the text clip gets the
+            # tolerance, so room colours never bleed into neighbours.
+            svg += (
+                f'<clipPath id="{room_clip_id}">'
+                f'<rect x="{b.x1 - cm}" y="{b.y1 - cm}" '
+                f'width="{b.width + 2 * cm}" height="{b.height + 2 * cm}"/>'
+                f'</clipPath>'
+            )
 
-        svg_output += "</svg>\n"
-        return svg_output
+            # Semi-transparent fill so the dark canvas shows through subtly
+            svg += (
+                f'<rect x="{b.x1}" y="{b.y1}" '
+                f'width="{b.width}" height="{b.height}" '
+                f'fill="{r.paint_hex}" '
+                f'fill-opacity="{SVGRenderer.FILL_OPACITY}" stroke="none"/>'
+            )
 
-    def render_complete_floorplan(
-        self, 
-        building: BuildingGeometry, 
-        template: FootprintTemplate,
-        doors: List[Door], 
-        windows: List[Window], 
-        dimensions: List[Dict[str, Any]], 
-        paint_map: Dict[str, Dict[str, str]]
-    ) -> List[str]:
-        """Iterates through and compiles independent blueprint vector outputs for every floor in the building."""
-        blueprints: List[str] = []
-        for idx in range(len(building.floors)):
-            svg_str = self.render_floor(idx, building, template, doors, windows, dimensions, paint_map)
-            if svg_str:
-                blueprints.append(svg_str)
-        return blueprints
+            name_lines, name_font, area_font, show_area = SVGRenderer._fit_room_text(
+                name, area_label, b.width, b.height
+            )
 
-    def export_svg(self, svg_content: str, file_path: str) -> bool:
-        """Utility function to write the generated SVG content to a file for system deployment handles."""
-        try:
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.write(svg_content)
-            return True
-        except IOError:
-            return False
+            block_h = len(name_lines) * name_font * SVGRenderer._LINE_HEIGHT_RATIO
+            if show_area:
+                block_h += area_font * SVGRenderer._LINE_HEIGHT_RATIO
+            start_y = r.center.y - block_h / 2 + name_font * 0.78
+
+            svg += f'<g clip-path="url(#{room_clip_id})">'
+            for i, line in enumerate(name_lines):
+                ly = start_y + i * name_font * SVGRenderer._LINE_HEIGHT_RATIO
+                svg += (
+                    f'<text x="{r.center.x}" y="{ly}" font-family="monospace" '
+                    f'font-size="{name_font}" font-weight="bold" '
+                    f'fill="{SVGRenderer.ROOM_TEXT_COLOR}" '
+                    f'text-anchor="middle">{line}</text>'
+                )
+            if show_area:
+                area_y = (
+                    start_y
+                    + len(name_lines) * name_font * SVGRenderer._LINE_HEIGHT_RATIO
+                    + area_font * 0.78
+                )
+                svg += (
+                    f'<text x="{r.center.x}" y="{area_y}" font-family="monospace" '
+                    f'font-size="{area_font}" '
+                    f'fill="{SVGRenderer.AREA_TEXT_COLOR}" '
+                    f'text-anchor="middle">{area_label}</text>'
+                )
+            svg += '</g>'
+
+        # ── 4. Plot boundary polygon ─────────────────────────────────────────
+        # Drawn on top of room fills so the true plot silhouette is always
+        # clearly visible against the dark canvas (gold outline, no fill).
+        svg += (
+            f'<polygon points="{points_attr}" fill="none" '
+            f'stroke="{SVGRenderer.PLOT_STROKE}" '
+            f'stroke-width="{SVGRenderer.PLOT_SW}" stroke-dasharray="0"/>'
+        )
+
+        # ── 5. Walls ─────────────────────────────────────────────────────────
+        for w in walls:
+            color = SVGRenderer.EXT_WALL_COLOR if w.is_exterior else SVGRenderer.INT_WALL_COLOR
+            svg += (
+                f'<line x1="{w.x1}" y1="{w.y1}" x2="{w.x2}" y2="{w.y2}" '
+                f'stroke="{color}" stroke-width="{w.thickness}" '
+                f'stroke-linecap="square"/>'
+            )
+
+        # ── 6. Portals (windows and doors) ───────────────────────────────────
+        for p in portals:
+            if p.portal_type == "window":
+                # Thick cyan bar drawn directly on the wall line —
+                # WIN_SW (2.0) gives the prominent rectangular appearance
+                # that matches the reference screenshot.
+                svg += (
+                    f'<line x1="{p.x1}" y1="{p.y1}" x2="{p.x2}" y2="{p.y2}" '
+                    f'stroke="{SVGRenderer.WIN_COLOR}" '
+                    f'stroke-width="{SVGRenderer.WIN_SW}" '
+                    f'stroke-linecap="square"/>'
+                )
+
+            elif p.portal_type == "door":
+                # a) Clear the wall line with the canvas colour so the door
+                #    opening appears as a clean gap (no white bleed on dark bg)
+                svg += (
+                    f'<line x1="{p.x1}" y1="{p.y1}" x2="{p.x2}" y2="{p.y2}" '
+                    f'stroke="{SVGRenderer.DOOR_CLEAR}" '
+                    f'stroke-width="{SVGRenderer.DOOR_CLEAR_SW}"/>'
+                )
+
+                if p.is_horizontal:
+                    swing_end_y = p.y1 + (3.0 * p.swing_direction_y)
+                    sweep = "1" if p.swing_direction_x > 0 else "0"
+                    arc_end_x = p.hinge_x + (3.0 * p.swing_direction_x)
+
+                    # b) Door panel (gold line from hinge)
+                    svg += (
+                        f'<line x1="{p.hinge_x}" y1="{p.y1}" '
+                        f'x2="{p.hinge_x}" y2="{swing_end_y}" '
+                        f'stroke="{SVGRenderer.DOOR_PANEL_COL}" '
+                        f'stroke-width="{SVGRenderer.DOOR_PANEL_SW}"/>'
+                    )
+                    # c) Swing arc (muted gold, dashed)
+                    svg += (
+                        f'<path d="M {arc_end_x} {p.y1} A 3 3 0 0 {sweep} '
+                        f'{p.hinge_x} {swing_end_y}" fill="none" '
+                        f'stroke="{SVGRenderer.DOOR_ARC_COL}" '
+                        f'stroke-width="{SVGRenderer.DOOR_ARC_SW}" '
+                        f'stroke-dasharray="0.5"/>'
+                    )
+                else:
+                    swing_end_x = p.x1 + (3.0 * p.swing_direction_x)
+                    sweep = "1" if p.swing_direction_y > 0 else "0"
+                    arc_end_y = p.hinge_y + (3.0 * p.swing_direction_y)
+
+                    # b) Door panel
+                    svg += (
+                        f'<line x1="{p.x1}" y1="{p.hinge_y}" '
+                        f'x2="{swing_end_x}" y2="{p.hinge_y}" '
+                        f'stroke="{SVGRenderer.DOOR_PANEL_COL}" '
+                        f'stroke-width="{SVGRenderer.DOOR_PANEL_SW}"/>'
+                    )
+                    # c) Swing arc
+                    svg += (
+                        f'<path d="M {p.x1} {arc_end_y} A 3 3 0 0 {sweep} '
+                        f'{swing_end_x} {p.hinge_y}" fill="none" '
+                        f'stroke="{SVGRenderer.DOOR_ARC_COL}" '
+                        f'stroke-width="{SVGRenderer.DOOR_ARC_SW}" '
+                        f'stroke-dasharray="0.5"/>'
+                    )
+
+        # ── 7. Dimension lines ───────────────────────────────────────────────
+        for d in dimensions:
+            text_x = (d.x1 + d.x2) / 2
+            text_y = (d.y1 + d.y2) / 2
+
+            svg += (
+                f'<line x1="{d.x1}" y1="{d.y1}" x2="{d.x2}" y2="{d.y2}" '
+                f'stroke="{SVGRenderer.DIM_COLOR}" '
+                f'stroke-width="{SVGRenderer.DIM_SW}" '
+                f'marker-start="url(#{arrow_id})" marker-end="url(#{arrow_id})"/>'
+            )
+
+            if d.is_horizontal:
+                svg += (
+                    f'<text x="{text_x}" y="{text_y - 1.5}" '
+                    f'font-family="monospace" font-size="{SVGRenderer.DIM_FONT_SZ}" '
+                    f'fill="{SVGRenderer.DIM_COLOR}" text-anchor="middle">'
+                    f'{d.label}</text>'
+                )
+            else:
+                svg += (
+                    f'<text x="{text_x - 1.5}" y="{text_y}" '
+                    f'font-family="monospace" font-size="{SVGRenderer.DIM_FONT_SZ}" '
+                    f'fill="{SVGRenderer.DIM_COLOR}" text-anchor="middle" '
+                    f'transform="rotate(-90, {text_x - 1.5}, {text_y})">'
+                    f'{d.label}</text>'
+                )
+
+        # ── 8. North compass overlay ─────────────────────────────────────────
+        compass_x = plot_w + 6
+        compass_y = plot_d + 6
+        svg += (
+            f'<g transform="translate({compass_x}, {compass_y})">'
+            f'<circle cx="0" cy="0" r="2.5" fill="none" '
+            f'stroke="{SVGRenderer.COMPASS_COLOR}" stroke-width="0.4"/>'
+            f'<polygon points="0,-3 1.5,1.5 0,0 -1.5,1.5" '
+            f'fill="{SVGRenderer.COMPASS_COLOR}"/>'
+            f'<text x="0" y="4.5" font-family="monospace" font-size="1.2" '
+            f'fill="{SVGRenderer.COMPASS_COLOR}" text-anchor="middle">N</text>'
+            f'</g>'
+        )
+
+        svg += '</svg>'
+        return svg

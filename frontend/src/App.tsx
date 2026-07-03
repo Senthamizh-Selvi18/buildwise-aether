@@ -258,7 +258,7 @@ export default function App() {
 
       // requires_clarification (current_answers carries those answers back).
 
-      const response = await fetch('https://buildwise-aether-backend.onrender.com/api/generate', {
+      const response = await fetch('http://127.0.0.1:8000/api/generate', {
 
         method: 'POST',
 
@@ -414,7 +414,7 @@ export default function App() {
 
             />
 
-            <span style={{ fontSize: '10.3px', fontWeight: 600, color: 'var(--gold-light)', letterSpacing: '0.18em', textTransform: 'uppercase', fontFamily: 'var(--font-mono)' }}>Generative Architecture Engine v5.2</span>
+            <span style={{ fontSize: '10.3px', fontWeight: 600, color: 'var(--gold-light)', letterSpacing: '0.18em', textTransform: 'uppercase', fontFamily: 'var(--font-mono)' }}>System Platform Matrix v5.2</span>
 
           </motion.div>
 
@@ -472,7 +472,7 @@ export default function App() {
 
             >
 
-              Generating Blueprint...
+              Initialize Space Vector Core Matrix
 
             </button>
 
