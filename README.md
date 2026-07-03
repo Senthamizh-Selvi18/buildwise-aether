@@ -15,6 +15,18 @@
 ![Google ADK](https://img.shields.io/badge/Google-ADK-4285F4)
 ![Architecture](https://img.shields.io/badge/Architecture-Multi--Agent-purple)
 
+
+---
+
+## 🌐 Live Demo:
+
+**Frontend:** https://buildwise-aether-frontend.vercel.app
+
+**Backend API:** https://buildwise-aether-backend.onrender.com
+
+**API Documentation:** https://buildwise-aether-backend.onrender.com/docs
+
+
 ---
 
 ## 📑 Table of Contents
@@ -229,7 +241,7 @@ The modular deployment strategy simplifies scaling, maintenance, and future enha
 ### Clone the Repository
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/Senthamizh-Selvi18/buildwise-aether
 cd buildwise-aether
 ```
 
@@ -258,7 +270,7 @@ npm run dev
 ## 🏠 Home Page
 
 <p align="center">
-<img src="assets/home.png" width="95%">
+<img src="assets/home.jpeg" width="95%">
 </p>
 
 ---
@@ -266,7 +278,7 @@ npm run dev
 ## 📝 Requirement Collection
 
 <p align="center">
-<img src="assets/requirements.png" width="95%">
+<img src="assets/requirements.jpeg" width="95%">
 </p>
 
 ---
@@ -274,7 +286,7 @@ npm run dev
 ## 📐 Floor Plan Generation
 
 <p align="center">
-<img src="assets/floorplan.png" width="95%">
+<img src="assets/floorplan.jpeg" width="95%">
 </p>
 
 ---
@@ -282,7 +294,7 @@ npm run dev
 ## 💰 Cost Estimation
 
 <p align="center">
-<img src="assets/cost.png" width="95%">
+<img src="assets/cost.jpeg" width="95%">
 </p>
 
 ---
@@ -290,7 +302,7 @@ npm run dev
 ## 🎨 Paint Recommendation
 
 <p align="center">
-<img src="assets/paint.png" width="95%">
+<img src="assets/paint.jpeg" width="95%">
 </p>
 
 ---
@@ -319,4 +331,7 @@ This project is licensed under the MIT License. See the LICENSE file for details
 # 👨‍💻 Author
 
 **Senthamizh Selvi I**
+
+- GitHub: https://github.com/Senthamizh-Selvi18
+- LinkedIn: https://linkedin.com/in/senthamizh-selvi-i-298451359
 
