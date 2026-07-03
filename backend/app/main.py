@@ -1566,6 +1566,21 @@ def _extract_clues_from_prompt(prompt: str) -> Dict[str, Any]:
     floors_requested, and the API would (incorrectly) keep asking the user
     questions it could have answered itself from the prompt.
     """
+
+
+    _orientation_kw = [
+        "north",
+        "south",
+        "east",
+        "west",
+        "north east",
+        "north west",
+        "south east",
+        "south west",
+    ]
+
+    extracted = {}
+    ...
     extracted: Dict[str, Any] = {}
     if not prompt:
         return extracted
@@ -1666,12 +1681,7 @@ def _extract_clues_from_prompt(prompt: str) -> Dict[str, Any]:
     elif re.search(r'\bmedium\s*(?:natural\s*)?light\b|\bmoderate\s*(?:sun|light)\b', p):
         extracted["natural_lighting"] = "medium"
 
-        _orientation_kw = (
-            "north east", "northeast", "north west", "northwest",
-            "south east", "southeast", "south west", "southwest",
-            "north", "south", "east", "west",
-    )
-
+    
     for kw in _orientation_kw:
         pattern = kw.replace(" ", r"[\s-]?")
 
