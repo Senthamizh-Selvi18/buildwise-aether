@@ -28,7 +28,21 @@ from enum import Enum
 try:
     from backend.app.core.geometry.geometry_engine import GeometryEngine
 except ImportError:
-    GeometryEngine = None  # generation endpoint will raise a clear error if this is missing
+    # This used to be a bare `except ImportError: GeometryEngine = None`
+    # with a comment claiming "generation endpoint will raise a clear
+    # error if this is missing" -- it doesn't. Swallowing the exception
+    # here means EVERY request silently falls back to the weak
+    # non-BSP layout generator forever, with a 200 OK and nothing
+    # printed anywhere, even in the server logs. If this ever fires
+    # again (missing file, typo, broken transitive import inside the
+    # geometry package), print the real traceback so it's visible in
+    # Render/uvicorn logs at boot instead of invisible.
+    print("=" * 80)
+    print("GeometryEngine import FAILED -- falling back to the weak layout")
+    print("engine for EVERY request until this is fixed. Traceback:")
+    print(traceback.format_exc())
+    print("=" * 80)
+    GeometryEngine = None
 
 # NOTE: paint recommendations used to come from either (a) whatever
 # GeometryEngine's own internal paint step produces (a black box from this
