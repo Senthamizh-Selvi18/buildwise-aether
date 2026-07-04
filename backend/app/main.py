@@ -120,26 +120,94 @@ except Exception as _geo_import_exc:
 # _generate_theme_driven_paint_recommendations() below), and which reports
 # any still-missing required preference so it can be asked as a follow-up
 # question instead of silently guessed.
-try:
-    from app.core.paint_engine import (
-        PaintEngine as ThemePaintEngine,
-        PaintPreferences as _PaintPreferences,
-        preferences_from_legacy_clues as _preferences_from_legacy_clues,
-        REQUIRED_PREFERENCE_QUESTIONS as _PAINT_REQUIRED_QUESTIONS,
-    )
-except ImportError:
-    try:
-        from backend.app.core.paint_engine import (
-            PaintEngine as ThemePaintEngine,
-            PaintPreferences as _PaintPreferences,
-            preferences_from_legacy_clues as _preferences_from_legacy_clues,
-            REQUIRED_PREFERENCE_QUESTIONS as _PAINT_REQUIRED_QUESTIONS,
-        )
-    except ImportError:
-        ThemePaintEngine = None
-        _PaintPreferences = None
-        _preferences_from_legacy_clues = None
-        _PAINT_REQUIRED_QUESTIONS = {}
+def _load_paint_engine_module():
+    """
+    Loads app.core.paint_engine.PaintEngine (the real, computed-colour
+    engine) as reliably as possible.
+
+    ROOT CAUSE of "paint recommendations show generic placeholder text
+    instead of the computed per-room palette": the two import attempts
+    this used to try (`app.core.paint_engine` / `backend.app.core.paint_engine`)
+    both silently swallowed ONLY `ImportError`. On some deployment layouts
+    neither dotted path resolves (e.g. the service root doesn't happen to
+    have an `app` or `backend` package on sys.path even though the *file*
+    paint_engine.py is sitting right next to this one on disk), so both
+    attempts failed, ThemePaintEngine was silently set to None, and every
+    downstream caller quietly returned `{}` for paint_recommendations. The
+    frontend then has nothing real to render and falls back to its own
+    generic, non-personalized placeholder copy -- which is exactly the
+    "Architectural Alabaster / Slate Velvet" style boilerplate text (not
+    computed, not per-project, identical every time), instead of the real
+    HSL-computed, per-room, fully-explained palette this engine produces.
+
+    Fix: try every plausible dotted path AND, as a last resort, load
+    paint_engine.py directly off disk by searching the directories this
+    file itself lives in / near, via importlib -- so as long as the file
+    exists anywhere sane relative to this one, it will be found and used
+    instead of leaving paint recommendations empty.
+
+    NOTE: this touches ONLY how PaintEngine is located/imported. It does
+    not change geometry, layout, or SVG rendering in any way.
+    """
+    import importlib
+    import importlib.util
+
+    dotted_candidates = [
+        "app.core.paint_engine",
+        "backend.app.core.paint_engine",
+        "core.paint_engine",
+        "paint_engine",
+    ]
+    for dotted in dotted_candidates:
+        try:
+            mod = importlib.import_module(dotted)
+            return mod, None
+        except Exception:
+            continue
+
+    # Last resort: search for paint_engine.py on disk near this file and
+    # load it directly, bypassing the package/import-path guesswork above
+    # entirely.
+    this_dir = os.path.dirname(os.path.abspath(__file__))
+    search_roots = [
+        this_dir,
+        os.path.join(this_dir, "core"),
+        os.path.join(this_dir, "app", "core"),
+        os.path.dirname(this_dir),
+        os.path.join(os.path.dirname(this_dir), "app", "core"),
+    ]
+    for root in search_roots:
+        candidate = os.path.join(root, "paint_engine.py")
+        if os.path.isfile(candidate):
+            try:
+                spec = importlib.util.spec_from_file_location("paint_engine_dynamic", candidate)
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                return mod, None
+            except Exception:
+                import traceback as _tb
+                return None, _tb.format_exc()
+
+    return None, f"paint_engine.py not found under any of: {search_roots}"
+
+
+_paint_engine_mod, PAINT_ENGINE_IMPORT_ERROR = _load_paint_engine_module()
+if _paint_engine_mod is not None:
+    ThemePaintEngine = _paint_engine_mod.PaintEngine
+    _PaintPreferences = _paint_engine_mod.PaintPreferences
+    _preferences_from_legacy_clues = _paint_engine_mod.preferences_from_legacy_clues
+    _PAINT_REQUIRED_QUESTIONS = _paint_engine_mod.REQUIRED_PREFERENCE_QUESTIONS
+else:
+    ThemePaintEngine = None
+    _PaintPreferences = None
+    _preferences_from_legacy_clues = None
+    _PAINT_REQUIRED_QUESTIONS = {}
+    print("=" * 70)
+    print("PaintEngine FAILED TO IMPORT -- paint recommendations will be empty "
+          "and the frontend will show generic placeholder colours instead of "
+          "the computed, per-room palette.")
+    print(PAINT_ENGINE_IMPORT_ERROR)
+    print("=" * 70)
 
 
 # ── Finite-number input guard ───────────────────────────────────────────────
