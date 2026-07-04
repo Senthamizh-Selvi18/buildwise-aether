@@ -120,26 +120,91 @@ except Exception as _geo_import_exc:
 # _generate_theme_driven_paint_recommendations() below), and which reports
 # any still-missing required preference so it can be asked as a follow-up
 # question instead of silently guessed.
-try:
-    from app.core.paint_engine import (
-        PaintEngine as ThemePaintEngine,
-        PaintPreferences as _PaintPreferences,
-        preferences_from_legacy_clues as _preferences_from_legacy_clues,
-        REQUIRED_PREFERENCE_QUESTIONS as _PAINT_REQUIRED_QUESTIONS,
-    )
-except ImportError:
-    try:
-        from backend.app.core.paint_engine import (
-            PaintEngine as ThemePaintEngine,
-            PaintPreferences as _PaintPreferences,
-            preferences_from_legacy_clues as _preferences_from_legacy_clues,
-            REQUIRED_PREFERENCE_QUESTIONS as _PAINT_REQUIRED_QUESTIONS,
-        )
-    except ImportError:
-        ThemePaintEngine = None
-        _PaintPreferences = None
-        _preferences_from_legacy_clues = None
-        _PAINT_REQUIRED_QUESTIONS = {}
+def _load_paint_engine_module():
+    """
+    Loads app.core.paint_engine.PaintEngine (the real, computed-colour
+    engine) as reliably as possible.
+
+    ROOT CAUSE of "paint recommendations show generic placeholder text
+    instead of the computed per-room palette": the two import attempts
+    this used to try (`app.core.paint_engine` / `backend.app.core.paint_engine`)
+    both silently swallowed ONLY `ImportError`. On some deployment layouts
+    neither dotted path resolves (e.g. the service root doesn't happen to
+    have an `app` or `backend` package on sys.path even though the *file*
+    paint_engine.py is sitting right next to this one on disk), so both
+    attempts failed, ThemePaintEngine was silently set to None, and every
+    downstream caller quietly returned `{}` for paint_recommendations. The
+    frontend then has nothing real to render and falls back to its own
+    generic, non-personalized placeholder copy -- which is exactly the
+    "Architectural Alabaster / Slate Velvet" style boilerplate text (not
+    computed, not per-project, identical every time), instead of the real
+    HSL-computed, per-room, fully-explained palette this engine produces.
+
+    Fix: try every plausible dotted path AND, as a last resort, load
+    paint_engine.py directly off disk by searching the directories this
+    file itself lives in / near, via importlib -- so as long as the file
+    exists anywhere sane relative to this one, it will be found and used
+    instead of leaving paint recommendations empty.
+    """
+    import importlib
+    import importlib.util
+
+    dotted_candidates = [
+        "app.core.paint_engine",
+        "backend.app.core.paint_engine",
+        "core.paint_engine",
+        "paint_engine",
+    ]
+    for dotted in dotted_candidates:
+        try:
+            mod = importlib.import_module(dotted)
+            return mod, None
+        except Exception:
+            continue
+
+    # Last resort: search for paint_engine.py on disk near this file and
+    # load it directly, bypassing the package/import-path guesswork above
+    # entirely.
+    this_dir = os.path.dirname(os.path.abspath(__file__))
+    search_roots = [
+        this_dir,
+        os.path.join(this_dir, "core"),
+        os.path.join(this_dir, "app", "core"),
+        os.path.dirname(this_dir),
+        os.path.join(os.path.dirname(this_dir), "app", "core"),
+    ]
+    for root in search_roots:
+        candidate = os.path.join(root, "paint_engine.py")
+        if os.path.isfile(candidate):
+            try:
+                spec = importlib.util.spec_from_file_location("paint_engine_dynamic", candidate)
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                return mod, None
+            except Exception:
+                import traceback as _tb
+                return None, _tb.format_exc()
+
+    return None, f"paint_engine.py not found under any of: {search_roots}"
+
+
+_paint_engine_mod, PAINT_ENGINE_IMPORT_ERROR = _load_paint_engine_module()
+if _paint_engine_mod is not None:
+    ThemePaintEngine = _paint_engine_mod.PaintEngine
+    _PaintPreferences = _paint_engine_mod.PaintPreferences
+    _preferences_from_legacy_clues = _paint_engine_mod.preferences_from_legacy_clues
+    _PAINT_REQUIRED_QUESTIONS = _paint_engine_mod.REQUIRED_PREFERENCE_QUESTIONS
+else:
+    ThemePaintEngine = None
+    _PaintPreferences = None
+    _preferences_from_legacy_clues = None
+    _PAINT_REQUIRED_QUESTIONS = {}
+    print("=" * 70)
+    print("PaintEngine FAILED TO IMPORT -- paint recommendations will be empty "
+          "and the frontend will show generic placeholder colours instead of "
+          "the computed, per-room palette.")
+    print(PAINT_ENGINE_IMPORT_ERROR)
+    print("=" * 70)
 
 
 # ── Finite-number input guard ───────────────────────────────────────────────
@@ -1309,10 +1374,35 @@ async def generate_floorplan(request: GenerationRequest):
             for floor_idx, fd in enumerate(result["floors"]):
                 doors = [p for p in fd["portals"] if p["type"] == "door"]
                 windows = [p for p in fd["portals"] if p["type"] == "window"]
+
+                # ROOT CAUSE of "room names/dimensions missing inside
+                # rooms": this used to trust `fd["svg_dump"]` verbatim --
+                # whatever SVG string the external
+                # backend.app.core.geometry.geometry_engine module
+                # happened to render. That module (and its svg_renderer.py)
+                # lives outside this file and isn't something this
+                # function controls or can verify the label logic of. If
+                # ITS renderer omits room name/dimension text (a rendering
+                # bug in that separate module, or simply a different
+                # visual style than this file's own renderer), the
+                # floor plan comes back looking "correct" (right room
+                # shapes/walls/doors) but silently unlabeled.
+                #
+                # Fix: always regenerate the SVG from this file's own
+                # `_generate_professional_svg`, which is guaranteed (via
+                # `_normalize_room_for_svg`) to draw every room's name and
+                # dimensions regardless of which engine produced the room
+                # geometry. `fd["rooms"]` (the actual room positions/sizes)
+                # is still taken from the real engine -- only the visual
+                # rendering step is unified.
+                svg_dump = _generate_professional_svg(
+                    fd["rooms"], plot_w, plot_d, floor_idx
+                )
+
                 out_floors.append({
                     "floor_name": fd["floor_name"],
                     "level": floor_idx,
-                    "svg_dump": fd["svg_dump"],
+                    "svg_dump": svg_dump,
                     "rooms": fd["rooms"],
                     "doors": doors,
                     "windows": windows,
@@ -2001,6 +2091,65 @@ def _build_required_rooms(clues: Dict[str, Any], bhk: int, floors: int, user_pro
 
 # ── Professional SVG Generation ────────────────────────────────────────────────
 
+def _normalize_room_for_svg(room: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Normalizes a room dict from ANY of the geometry engines this project
+    has accumulated into one flat, guaranteed shape: {name, x1, y1, x2,
+    y2, width, height, area_sqft}.
+
+    ROOT CAUSE of "room names/dimensions missing inside rooms": there are
+    multiple, differently-shaped room representations floating around
+    this codebase --
+      - ArchitecturalGeometryEngine (this file): flat x1/y1/x2/y2/width/height/area
+      - the external backend.app.core.geometry.geometry_engine.GeometryEngine
+        (not vendored in this repo -- imported dynamically, shape unknown
+        at authoring time)
+      - fallback_engine.py's GeometryEngine: nested {"bbox": {x1,y1,x2,y2}},
+        flat "area_sqft", no flat width/height at all
+      - procedural_geometry_engine.py's RoomAllocation: a dataclass, not
+        a dict, with the same field NAMES but requiring .attribute access
+    Whichever one of these actually executes on a given deployment, the
+    renderer below used to read `room["x1"]` / `room["width"]` directly
+    and would either KeyError or silently draw a 0-width/0-height box
+    with no visible label the moment the shape didn't match exactly.
+    This normalizer makes the renderer shape-agnostic.
+    """
+    # Dataclass instances (e.g. RoomAllocation) -> plain dict first.
+    if not isinstance(room, dict):
+        room = {
+            k: getattr(room, k)
+            for k in ("id", "name", "x1", "y1", "x2", "y2", "area", "width", "height")
+            if hasattr(room, k)
+        }
+
+    name = room.get("name") or room.get("room_name") or "Room"
+
+    bbox = room.get("bbox") if isinstance(room.get("bbox"), dict) else None
+
+    x1 = room.get("x1", bbox.get("x1") if bbox else 0) or 0
+    y1 = room.get("y1", bbox.get("y1") if bbox else 0) or 0
+    x2 = room.get("x2", bbox.get("x2") if bbox else None)
+    y2 = room.get("y2", bbox.get("y2") if bbox else None)
+
+    width = room.get("width")
+    height = room.get("height")
+    if width is None:
+        width = (x2 - x1) if x2 is not None else 10.0
+    if height is None:
+        height = (y2 - y1) if y2 is not None else 10.0
+
+    area = room.get("area_sqft", room.get("area", round(width * height, 2)))
+
+    return {
+        "name": name,
+        "x1": float(x1),
+        "y1": float(y1),
+        "width": max(0.1, float(width)),
+        "height": max(0.1, float(height)),
+        "area_sqft": float(area),
+    }
+
+
 def _generate_professional_svg(
     rooms: List[Dict[str, Any]],
     plot_w: float,
@@ -2012,7 +2161,8 @@ def _generate_professional_svg(
     - Exterior walls with proper thickness
     - Interior partition walls
     - Door and window symbols
-    - Room labels with dimensions
+    - Room labels with dimensions (ALWAYS present -- see
+      _normalize_room_for_svg for why this used to silently fail)
     - Professional annotations
     - Grid and scale
     - North arrow
@@ -2020,6 +2170,8 @@ def _generate_professional_svg(
     
     if not rooms:
         return ""
+
+    rooms = [_normalize_room_for_svg(r) for r in rooms]
     
     SCALE = 12  # pixels per foot
     MARGIN = 40
@@ -2096,21 +2248,54 @@ def _generate_professional_svg(
             f'fill-opacity="0.2" stroke-dasharray="0"/>'
         )
         
-        # Room label
         cx = rx1 + rw // 2
         cy = ry1 + rh // 2
         label = room.get("name", "Room").replace("_", " ").title()
-        fsize = max(8, min(12, rw // max(1, len(label) // 2)))
-        
-        lines.append(
-            f'<text x="{cx}" y="{cy - 4}" text-anchor="middle" '
-            f'font-size="{fsize}" font-weight="bold" fill="#c8a84b">{label}</text>'
-        )
-        
-        # Dimensions
         dim = f"{room.get('width', 0):.0f}\'×{room.get('height', 0):.0f}\'"
+
+        # Font size is driven by the room's actual box size (not just the
+        # label's character count) so a small room never ends up with a
+        # font so large it overflows invisibly, and a large room never
+        # gets a font so small it's unreadable. Always clamps to a legible
+        # minimum -- previously a small room + long label combination
+        # could compute font-size below what's visible at typical zoom.
+        fsize = max(7, min(13, rw // max(4, len(label))))
+
+        # Long labels get wrapped onto two lines instead of overflowing
+        # the room box (which made them visually disappear behind
+        # neighbouring rooms/walls at small sizes).
+        max_chars_per_line = max(4, rw // max(1, fsize - 2))
+        if len(label) > max_chars_per_line and " " in label:
+            words = label.split(" ")
+            line1, line2 = [], []
+            cur_len = 0
+            for w in words:
+                if cur_len + len(w) <= max_chars_per_line or not line1:
+                    line1.append(w)
+                    cur_len += len(w) + 1
+                else:
+                    line2.append(w)
+            label_lines = [" ".join(line1)] + ([" ".join(line2)] if line2 else [])
+        else:
+            label_lines = [label]
+
+        n_lines = len(label_lines)
+        line_height = fsize + 2
+        # Vertically stack: label line(s) then the dimension string,
+        # centered as a block around the room's midpoint.
+        block_height = n_lines * line_height + (fsize - 1)
+        start_y = cy - block_height / 2 + fsize
+
+        for i, line_text in enumerate(label_lines):
+            ly = start_y + i * line_height
+            lines.append(
+                f'<text x="{cx}" y="{ly:.1f}" text-anchor="middle" '
+                f'font-size="{fsize}" font-weight="bold" fill="#c8a84b">{line_text}</text>'
+            )
+
+        dim_y = start_y + n_lines * line_height
         lines.append(
-            f'<text x="{cx}" y="{cy + 8}" text-anchor="middle" '
+            f'<text x="{cx}" y="{dim_y:.1f}" text-anchor="middle" '
             f'font-size="{max(7, fsize - 2)}" fill="#8a7a3a">{dim}</text>'
         )
     
