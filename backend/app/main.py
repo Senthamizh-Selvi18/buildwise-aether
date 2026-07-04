@@ -4,6 +4,9 @@
 # architect-level geometry, dynamic paint recommendations, and real-time cost estimation
 
 import re
+import os
+import sys
+import types
 import uuid
 import math
 import traceback
@@ -13,6 +16,61 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List, Tuple
 from enum import Enum
+
+
+def _bootstrap_backend_import_alias() -> None:
+    """
+    Every geometry module (geometry_engine.py, adjacency_graph.py,
+    plot_geometry.py, room_allocator.py, wall_generator.py,
+    door_generator.py, window_generator.py, dimension_generator.py,
+    svg_renderer.py, models.py) imports its siblings using the path
+    "backend.app.core.geometry.X" -- correct when this whole project's
+    repo root (containing a literal backend/ folder) is what's on
+    sys.path.
+
+    On Render, if the service's "Root Directory" build setting is set to
+    "backend", the platform runs the app with the *contents* of that
+    folder AS the container root -- so main.py itself deploys to
+    <root>/app/main.py, and there is no literal "backend" folder left
+    anywhere on disk to import. Every "from backend.app.core.geometry...."
+    import then fails with "No module named 'backend'", and main.py's own
+    except-block silently swaps in the older, weaker fallback layout
+    engine (fixed room sizes like "Entrance 5'x6'", not the real
+    proportional BSP layout).
+
+    Rather than rewriting the import statements in all 10 files (fragile,
+    and would break the OTHER layout where backend/ genuinely exists --
+    e.g. local development), this registers "backend" and "backend.app"
+    as synthetic namespace packages pointing directly at wherever main.py
+    physically lives the moment the real "backend" package can't be
+    found. Every downstream "from backend.app.core.geometry.X import Y"
+    then resolves correctly no matter which of the two layouts is
+    actually on disk -- no dashboard settings or file moves required.
+    """
+    try:
+        import backend  # noqa: F401 -- already resolvable, nothing to fix
+        return
+    except ModuleNotFoundError:
+        pass
+
+    this_dir = os.path.dirname(os.path.abspath(__file__))
+    if not os.path.isdir(os.path.join(this_dir, "core")):
+        # Neither known layout matches what's actually on disk here --
+        # don't mask the problem, let the real ImportError surface below
+        # with its genuine (and now different) cause.
+        return
+
+    backend_pkg = types.ModuleType("backend")
+    backend_pkg.__path__ = []  # namespace package; "app" is wired in directly below
+    sys.modules["backend"] = backend_pkg
+
+    backend_app_pkg = types.ModuleType("backend.app")
+    backend_app_pkg.__path__ = [this_dir]
+    sys.modules["backend.app"] = backend_app_pkg
+    backend_pkg.app = backend_app_pkg
+
+
+_bootstrap_backend_import_alias()
 
 # ── Core engines ─────────────────────────────────────────────────────────────
 # NOTE: This used to try to import a non-existent "procedural_geometry_engine"
