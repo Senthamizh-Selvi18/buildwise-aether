@@ -1,4 +1,3 @@
-import uuid
 from typing import List, Tuple
 from backend.app.core.geometry.models import (
     RoomGeometry, WallGeometry, PortalGeometry, DimensionLine
@@ -67,158 +66,85 @@ class SVGRenderer:
     COMPASS_COLOR   = "#e8dfc8"
 
     # ── Text-fit constants ────────────────────────────────────────────────────
-    # NOTE on units: these are SVG font-size units in the SAME coordinate
-    # space as the floor plan itself (feet), not screen pixels. On a
-    # typical ~30x40ft plot rendered into a normal-width container, 1 unit
-    # here is roughly 10-12 actual screen pixels. The previous floors
-    # (_MIN_FONT=0.42, area=0.3) worked out to ~4-5px and ~3-4px on
-    # screen -- technically "fitted" inside a room's box, but not
-    # actually readable. Raised to real legibility floors below.
     _CHAR_WIDTH_RATIO = 0.62
     _LINE_HEIGHT_RATIO = 1.15
     _MAX_FONT = 2.0
-    _MIN_FONT = 1.05        # room name floor -> stays readable at normal render sizes
-    _AREA_MIN_FONT = 0.75   # dimensions/area floor -> smaller than name, still legible
-    _CLIP_MARGIN = 0.5      # ft of clip-path tolerance around each room's own
-                             # bbox, so a name held at the legibility floor
-                             # in a too-small room is allowed to spill a
-                             # little rather than being invisibly clipped
+    _MIN_FONT = 0.42
 
     # ── Internal helpers ──────────────────────────────────────────────────────
 
     @staticmethod
-    def _wrap_words_only(name: str, max_chars_per_line: int):
-        """Greedy word-wrap that NEVER splits a word mid-way. Returns None
-        if any single word alone is longer than max_chars_per_line, so the
-        caller can try a smaller font (more chars fit per line) before
-        resorting to a hard character break."""
-        max_chars_per_line = max(2, max_chars_per_line)
-        words = name.split() or [name]
-        if any(len(w) > max_chars_per_line for w in words):
-            return None
-        lines: List[str] = []
-        current = ""
+    def _balanced_wrap(words: List[str], n_lines: int) -> List[str]:
+        """Greedily distribute words across up to n_lines, balancing total
+        character length per line so multi-word room names (e.g. 'POOJA
+        ROOM', 'MASTER BEDROOM') wrap sensibly instead of overflowing."""
+        n_lines = max(1, min(n_lines, len(words)))
+        if n_lines == 1:
+            return [" ".join(words)]
+        lines = [""] * n_lines
+        lengths = [0] * n_lines
         for w in words:
-            candidate = (current + " " + w).strip()
-            if len(candidate) <= max_chars_per_line:
-                current = candidate
-            else:
-                if current:
-                    lines.append(current)
-                current = w
-        if current:
-            lines.append(current)
-        return lines or [name]
-
-    @staticmethod
-    def _wrap_text_to_width(name: str, max_chars_per_line: int) -> List[str]:
-        """Greedy word-wrap to a target character width. If a single word
-        alone is still wider than a full line (common for compound room
-        names like 'ATTACHED BATHROOM' once it's down to one word per
-        line, or any long single-word name in a very small room), hard-
-        breaks that word into fixed-width chunks so text still fits
-        within the available width instead of overflowing indefinitely."""
-        max_chars_per_line = max(2, max_chars_per_line)
-        words = name.split() or [name]
-        lines: List[str] = []
-        current = ""
-        for w in words:
-            while len(w) > max_chars_per_line:
-                if current:
-                    lines.append(current)
-                    current = ""
-                lines.append(w[:max_chars_per_line])
-                w = w[max_chars_per_line:]
-            candidate = (current + " " + w).strip()
-            if len(candidate) <= max_chars_per_line:
-                current = candidate
-            else:
-                if current:
-                    lines.append(current)
-                current = w
-        if current:
-            lines.append(current)
-        return lines or [name]
+            idx = lengths.index(min(lengths))
+            lines[idx] = (lines[idx] + " " + w).strip()
+            lengths[idx] = len(lines[idx])
+        return [l for l in lines if l]
 
     @staticmethod
     def _fit_room_text(name: str, area_label: str, room_w: float, room_h: float):
         """
-        Computes a font size + line layout that genuinely adapts to the
-        room's own available area: big rooms get a big single-line name,
-        small rooms wrap onto more (smaller) lines, and the size search
-        never drops below a real legibility floor. Unlike a fixed
-        line-count search, this tries progressively smaller font sizes
-        and re-wraps the name to fit the resulting width at each size,
-        so the layout always matches what actually fits rather than
-        guessing a line count first.
-
-        Word-boundary wrapping (never splitting a word) is always tried
-        first, across the whole font range down to the legibility floor,
-        before a hard mid-word character break is used -- so a slightly
-        smaller, cleanly-wrapped label is preferred over a bigger one
-        that chops a word in half.
-
-        The area/dimension label still only appears when there's
-        genuinely enough leftover space for it to also be legible --
-        that's what makes tiny rooms show name-only, adjusting
-        automatically to the space available.
+        Computes a font size + line layout that guarantees the room name
+        fits entirely inside the room's own bounding box, and -- unlike the
+        previous scoring-based approach, which let a bigger name font win
+        out over showing the area label (so area/dimension text would
+        randomly disappear from some rooms on a floor plan) -- now always
+        shows the area/dimension label underneath whenever there is ANY
+        leftover vertical space after the name, even if it has to shrink
+        down to a small but still-legible size. It's only omitted for truly
+        sliver-sized rooms where there's no room left at all.
 
         Returns:
             (name_lines: List[str], name_font: float,
              area_font: float, show_area: bool)
         """
-        pad = min(0.3, room_w * 0.06, room_h * 0.06)
+        pad = min(0.4, room_w * 0.08, room_h * 0.08)
         avail_w = max(room_w - 2 * pad, 0.6)
         avail_h = max(room_h - 2 * pad, 0.6)
         cw = SVGRenderer._CHAR_WIDTH_RATIO
         lh = SVGRenderer._LINE_HEIGHT_RATIO
-        min_font = SVGRenderer._MIN_FONT
+        words = name.split() or [name]
 
-        # ── Step 1: search downward from the largest comfortable size to
-        # the legibility floor, using word-boundary-only wrapping. First
-        # (largest) size that both wraps cleanly AND fits the available
-        # height wins -- this is what makes the label scale down smoothly
-        # as the room shrinks, instead of jumping straight to a
-        # worst-case tiny font or breaking a word unnecessarily.
-        best = None
-        font = SVGRenderer._MAX_FONT
-        while font >= min_font - 1e-9:
-            max_chars = max(2, int(avail_w / (cw * font)))
-            lines = SVGRenderer._wrap_words_only(name, max_chars)
-            if lines is not None:
-                block_h = len(lines) * font * lh
-                if block_h <= avail_h * 0.92:
-                    best = (font, lines)
-                    break
-            font = round(font - 0.05, 2)
+        # ── Step 1: find the best name-only layout (name always wins the
+        # room's primary billing; area is fit into whatever's left over) ──
+        best_name = None
+        max_possible_lines = min(3, len(words)) if len(words) > 1 else 1
+        for n_lines in range(1, max_possible_lines + 1):
+            lines = SVGRenderer._balanced_wrap(words, n_lines)
+            widest = max((len(l) for l in lines), default=1) or 1
+            font_by_height = (avail_h * 0.92) / (len(lines) * lh + 1e-6)
+            font_by_width = avail_w / (widest * cw)
+            font = min(font_by_height, font_by_width, SVGRenderer._MAX_FONT)
+            score = font - (len(lines) * 0.05)
+            if best_name is None or score > best_name[0]:
+                best_name = (score, lines, font)
 
-        if best is None:
-            # No clean word-boundary wrap fits even at the legibility
-            # floor (e.g. a single long word in a very small room) --
-            # fall back to a hard character break AT the floor size, and
-            # accept that it may spill slightly past the room's own
-            # bounds. The per-room clip-path tolerance (_CLIP_MARGIN)
-            # makes that spill actually visible instead of being
-            # silently cropped away.
-            max_chars = max(2, int(avail_w / (cw * min_font)))
-            best = (min_font, SVGRenderer._wrap_text_to_width(name, max_chars))
-
-        font, lines = best
-        font = round(font, 2)
+        _, lines, font = best_name
+        # Never let the name shrink below legibility, even if it means the
+        # box overflows slightly -- a readable name is the whole point of
+        # the label, matching the "clearly mention room name" requirement.
+        font = max(round(font, 2), SVGRenderer._MIN_FONT)
 
         # ── Step 2: fit the area/dimension label into whatever vertical
-        # space is left below the name. Only shown once it can also sit
-        # at or above its own legibility floor -- otherwise the room is
-        # simply too small for dimensions and shows the name alone.
+        # space is left below the name. Shown whenever there's any
+        # meaningful space left, shrunk down as needed rather than dropped.
         name_block_h = len(lines) * font * lh
         remaining_h = avail_h - name_block_h
         show_area = False
         area_font = 0.0
-        if remaining_h >= SVGRenderer._AREA_MIN_FONT * lh:
+        _AREA_MIN_FONT = 0.3  # smaller floor than name text -- still legible
+        if remaining_h >= _AREA_MIN_FONT * lh:
             area_font = min(font * 0.7, remaining_h / lh, avail_w / (max(len(area_label), 1) * cw))
-            if area_font >= SVGRenderer._AREA_MIN_FONT:
-                area_font = round(area_font, 2)
-                show_area = True
+            area_font = max(round(area_font, 2), _AREA_MIN_FONT)
+            show_area = True
 
         return lines, font, area_font, show_area
 
@@ -240,25 +166,6 @@ class SVGRenderer:
         if not plot_points:
             plot_points = [(0, 0), (plot_w, 0), (plot_w, plot_d), (0, plot_d)]
 
-        # ── Per-render unique id namespace ──────────────────────────────────
-        # Every floor's SVG is embedded inline into the SAME html document
-        # (multiple floors x multiple layout options on one page). SVG/HTML
-        # ids must be unique across the WHOLE document, not just within one
-        # <svg>. Before this fix, every render() call reused identical ids
-        # ("arrow", "cad_grid", "roomClip0", "roomClip1", ...), so
-        # url(#roomClip0) on, say, the First Floor SVG resolved to the
-        # FIRST "roomClip0" anywhere in the page -- the Ground Floor's --
-        # clipping First Floor room text through a rectangle sized for a
-        # totally different room. Text positioned outside that borrowed
-        # rectangle simply vanished, which is exactly the "only one room
-        # shows a label" symptom. Suffixing every id (and every reference
-        # to it) with a fresh uid per render() call makes ids globally
-        # unique so each floor's clip-paths/markers/patterns only ever
-        # resolve to their own definitions.
-        uid = uuid.uuid4().hex[:8]
-        arrow_id = f"arrow-{uid}"
-        grid_id = f"cad_grid-{uid}"
-
         poly_id = "plotBoundary"
         points_attr = " ".join(f"{px},{py}" for px, py in plot_points)
         BG  = SVGRenderer.BG_COLOR
@@ -277,11 +184,11 @@ class SVGRenderer:
         # Defs: arrow marker, grid pattern, per-room clip-paths added inline
         svg += (
             f'<defs>'
-            f'<marker id="{arrow_id}" viewBox="0 0 10 10" refX="5" refY="5" '
+            f'<marker id="arrow" viewBox="0 0 10 10" refX="5" refY="5" '
             f'markerWidth="4" markerHeight="4" orient="auto-start-reverse">'
             f'<path d="M 0 0 L 10 5 L 0 10 z" fill="{SVGRenderer.DIM_COLOR}"/>'
             f'</marker>'
-            f'<pattern id="{grid_id}" width="2" height="2" patternUnits="userSpaceOnUse">'
+            f'<pattern id="cad_grid" width="2" height="2" patternUnits="userSpaceOnUse">'
             f'<path d="M 2 0 L 0 0 0 2" fill="none" '
             f'stroke="{SVGRenderer.GRID_COLOR}" stroke-width="0.05"/>'
             f'</pattern>'
@@ -293,7 +200,7 @@ class SVGRenderer:
         # the margin area outside the plot polygon as well.
         svg += (
             f'<rect x="-20" y="-20" width="{vW}" height="{vH}" '
-            f'fill="url(#{grid_id})"/>'
+            f'fill="url(#cad_grid)"/>'
         )
 
         # ── 3. Room fills & text labels ─────────────────────────────────────
@@ -304,20 +211,13 @@ class SVGRenderer:
             dim_w        = round(b.width, 1)
             dim_h        = round(b.height, 1)
             area_label   = f"{dim_w}' × {dim_h}' · {area_val} SQ.FT"
-            room_clip_id = f"roomClip{idx}-{uid}"
-            cm = SVGRenderer._CLIP_MARGIN
+            room_clip_id = f"roomClip{idx}"
 
-            # Per-room clip-path prevents label bleeding into walls /
-            # neighbours, but is intentionally slightly larger than the
-            # room's own bbox (by _CLIP_MARGIN) so text held at the
-            # legibility floor in an undersized room can spill a little
-            # instead of being invisibly cropped. The FILL rect below
-            # stays at the exact bbox -- only the text clip gets the
-            # tolerance, so room colours never bleed into neighbours.
+            # Per-room clip-path prevents label bleeding into walls / neighbours
             svg += (
                 f'<clipPath id="{room_clip_id}">'
-                f'<rect x="{b.x1 - cm}" y="{b.y1 - cm}" '
-                f'width="{b.width + 2 * cm}" height="{b.height + 2 * cm}"/>'
+                f'<rect x="{b.x1}" y="{b.y1}" '
+                f'width="{b.width}" height="{b.height}"/>'
                 f'</clipPath>'
             )
 
@@ -451,7 +351,7 @@ class SVGRenderer:
                 f'<line x1="{d.x1}" y1="{d.y1}" x2="{d.x2}" y2="{d.y2}" '
                 f'stroke="{SVGRenderer.DIM_COLOR}" '
                 f'stroke-width="{SVGRenderer.DIM_SW}" '
-                f'marker-start="url(#{arrow_id})" marker-end="url(#{arrow_id})"/>'
+                f'marker-start="url(#arrow)" marker-end="url(#arrow)"/>'
             )
 
             if d.is_horizontal:
