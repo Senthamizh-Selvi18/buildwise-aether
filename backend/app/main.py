@@ -28,57 +28,26 @@ from enum import Enum
 try:
     from backend.app.core.geometry.geometry_engine import GeometryEngine
 except ImportError:
-    # This used to be a bare `except ImportError: GeometryEngine = None`
-    # with a comment claiming "generation endpoint will raise a clear
-    # error if this is missing" -- it doesn't. Swallowing the exception
-    # here means EVERY request silently falls back to the weak
-    # non-BSP layout generator forever, with a 200 OK and nothing
-    # printed anywhere, even in the server logs. If this ever fires
-    # again (missing file, typo, broken transitive import inside the
-    # geometry package), print the real traceback so it's visible in
-    # Render/uvicorn logs at boot instead of invisible.
-    print("=" * 80)
-    print("GeometryEngine import FAILED -- falling back to the weak layout")
-    print("engine for EVERY request until this is fixed. Traceback:")
-    print(traceback.format_exc())
-    print("=" * 80)
-    GeometryEngine = None
+    GeometryEngine = None  # generation endpoint will raise a clear error if this is missing
 
 # NOTE: paint recommendations used to come from either (a) whatever
 # GeometryEngine's own internal paint step produces (a black box from this
-# file's point of view) or (b) the old IntelligentPaintEngine class that
-# used to live in this file, which picked colours out of a fixed
-# PAINT_PROFILES table keyed only by room type + interior_style -- every
-# project with the same style got byte-identical colours, and inputs like
-# mood, colour preference, natural lighting, room orientation, climate,
-# Vastu preference, and occupancy (children/elderly/pets) had zero effect
-# on the output. That hardcoded engine has been removed. Paint
-# recommendations now come exclusively from app.core.paint_engine.PaintEngine,
-# which COMPUTES every colour via real HSL colour-theory math from the full
-# set of collected preferences (see _build_paint_preferences_from_clues() and
-# _generate_theme_driven_paint_recommendations() below), and which reports
-# any still-missing required preference so it can be asked as a follow-up
-# question instead of silently guessed.
+# file's point of view) or (b) IntelligentPaintEngine.get_paint_recommendation()
+# below, which only ever looked at `interior_style` -- it silently ignored
+# the `paint_theme` free-text answer entirely (e.g. typing "universe theme"
+# in the paint-theme follow-up question had zero effect on the output; you
+# always got whatever the fixed interior_style -> PAINT_PROFILES lookup
+# produced). app/core/paint_engine.py replaces that with a theme detector
+# that matches ~20 built-in themes (including "universe", "natural", "ocean",
+# etc.) plus a colour-word fallback against the ACTUAL text the user typed,
+# and both engines below are wired to call it directly.
 try:
-    from app.core.paint_engine import (
-        PaintEngine as ThemePaintEngine,
-        PaintPreferences as _PaintPreferences,
-        preferences_from_legacy_clues as _preferences_from_legacy_clues,
-        REQUIRED_PREFERENCE_QUESTIONS as _PAINT_REQUIRED_QUESTIONS,
-    )
+    from app.core.paint_engine import PaintEngine as ThemePaintEngine
 except ImportError:
     try:
-        from backend.app.core.paint_engine import (
-            PaintEngine as ThemePaintEngine,
-            PaintPreferences as _PaintPreferences,
-            preferences_from_legacy_clues as _preferences_from_legacy_clues,
-            REQUIRED_PREFERENCE_QUESTIONS as _PAINT_REQUIRED_QUESTIONS,
-        )
+        from backend.app.core.paint_engine import PaintEngine as ThemePaintEngine
     except ImportError:
         ThemePaintEngine = None
-        _PaintPreferences = None
-        _preferences_from_legacy_clues = None
-        _PAINT_REQUIRED_QUESTIONS = {}
 
 
 # ── Finite-number input guard ───────────────────────────────────────────────
@@ -277,108 +246,33 @@ def _paint_rec_to_legacy_shape(rec) -> Dict[str, Any]:
     }
 
 
-def _build_paint_preferences_from_clues(clues: Dict[str, Any], user_prompt: str) -> Any:
-    """
-    Builds a full, structured PaintPreferences object from everything we've
-    collected -- room type is handled per-room inside PaintEngine itself,
-    this covers the rest: interior style, mood, colour preference, natural
-    lighting, room orientation, climate/city, budget, Vastu preference, and
-    occupancy (children/elderly/pets). Falls back to the old free-text-only
-    inference (preferences_from_legacy_clues) shape but fills in the extra
-    structured fields this file now actually collects via follow-up
-    questions, so those answers actually influence the generated palette
-    instead of only the loosely-matched paint_theme free text.
-    """
-    if _preferences_from_legacy_clues is None:
-        return None
-
-    base = _preferences_from_legacy_clues(
-        clues, user_prompt=user_prompt,
-        city=clues.get("city"), budget=clues.get("budget_range"),
-    )
-    # Overlay the explicitly-collected structured answers (these are more
-    # authoritative than anything inferred from free text).
-    base.mood = clues.get("mood") or base.mood
-    base.color_preference = clues.get("color_preference") or base.color_preference
-    base.natural_lighting = clues.get("natural_lighting") or base.natural_lighting
-    base.room_orientation = (
-        clues.get("room_orientation") or clues.get("road_direction")
-        or clues.get("north_direction") or base.room_orientation
-    )
-    base.climate = clues.get("climate") or base.climate
-    if clues.get("vastu_preference") is not None:
-        base.vastu_preference = bool(clues.get("vastu_preference"))
-
-    occupancy: List[str] = []
-    if clues.get("elder_friendly"):
-        occupancy.append("elderly")
-    if clues.get("has_children"):
-        occupancy.append("children")
-    if clues.get("has_pets"):
-        occupancy.append("pets")
-    if occupancy or clues.get("occupancy_specified"):
-        base.occupancy = occupancy
-    return base
-
-
 def _generate_theme_driven_paint_recommendations(
     rooms: List[Dict[str, Any]], clues: Dict[str, Any], user_prompt: str
 ) -> Tuple[Dict[str, Dict[str, Any]], float]:
     """
     Single source of truth for paint recommendations, used by BOTH the real
-    GeometryEngine path and the fallback engine path. Builds a full
-    PaintPreferences object from room type, interior style, mood, colour
-    preference, natural lighting, room orientation, climate/city, budget,
-    Vastu preference, and occupancy, and generates a palette computed
-    (never looked up from a fixed table) for every room. Returns
+    GeometryEngine path and the fallback engine path, so the theme the user
+    typed always wins regardless of which layout engine ran. Returns
     (recommendations keyed by each room's `name`, total paint cost in INR).
     """
     if ThemePaintEngine is None:
         return {}, 0.0
 
+    theme_priority = _theme_priority_list_from_clues(clues, user_prompt)
     paint_rooms = [
         {"name": r.get("name", "room"), "area_sqft": r.get("area_sqft", r.get("area", 150))}
         for r in rooms
     ]
-
-    prefs = _build_paint_preferences_from_clues(clues, user_prompt)
-    if prefs is not None:
-        # allow_partial=True: by the time this is called, STEP 2 of the
-        # generation endpoint has already forced the user through the
-        # required-preference follow-up questions, so any preference still
-        # unanswered here is a genuinely optional one -- PaintEngine fills
-        # it with a clearly-noted default rather than blocking generation.
-        result = ThemePaintEngine.generate_personalized(paint_rooms, prefs, allow_partial=True)
-        recs = result.recommendations
-    else:
-        # PaintPreferences/preferences_from_legacy_clues weren't importable
-        # (older paint_engine.py) -- fall back to the legacy free-text-only
-        # entry point so the app still functions.
-        theme_priority = _theme_priority_list_from_clues(clues, user_prompt)
-        recs = ThemePaintEngine.generate_layered(
-            paint_rooms, theme_priority, city=clues.get("city") or "bangalore",
-            budget=clues.get("budget_range") or "mid",
-        )
-
+    recs = ThemePaintEngine.generate_layered(
+        paint_rooms, theme_priority, city=clues.get("city") or "bangalore",
+        budget=clues.get("budget_range") or "mid",
+    )
     total_cost = sum(r.total_cost_inr for r in recs)
     by_room_name = {
         room.get("name", "room"): _paint_rec_to_legacy_shape(rec)
         for room, rec in zip(rooms, recs)
     }
     return by_room_name, total_cost
-
-
-def _get_missing_paint_preferences(clues: Dict[str, Any], user_prompt: str) -> List[str]:
-    """
-    Returns the list of paint-preference keys PaintEngine considers
-    genuinely unanswered, given everything collected so far. Used to ask
-    intelligent follow-up questions BEFORE generating any recommendation,
-    instead of silently guessing.
-    """
-    prefs = _build_paint_preferences_from_clues(clues, user_prompt)
-    if prefs is None or ThemePaintEngine is None:
-        return []
-    return ThemePaintEngine.get_missing_preferences(prefs)
 
 
 app = FastAPI(
@@ -389,19 +283,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    # allow_origins=["*"] combined with allow_credentials=True is invalid
-    # per the CORS spec -- browsers refuse to honor a wildcard origin when
-    # credentials are allowed, and will silently block the response client-side
-    # (shows up as "Failed to fetch" with no useful server-side error).
-    # Pinning explicit origins here is both spec-compliant and avoids
-    # accidentally allowing arbitrary sites to call this API with
-    # credentials attached.
-    allow_origins=[
-        "https://buildwise-aether-frontend.vercel.app",
-        "http://localhost:3000",       # local frontend dev server
-        "http://127.0.0.1:3000",
-        "http://localhost:5173",       # in case Vite is used instead of CRA/Next
-    ],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -460,22 +342,6 @@ class GenerationRequest(BaseModel):
     paint_theme: Optional[str] = None       # e.g. "light & bright", "warm & earthy", "bold & dark"
     extra_spaces: Optional[str] = None      # free-text: parking count, pool, store room, gym, etc., or "none"
 
-    # ── Paint-personalization inputs ─────────────────────────────────────
-    # Feeds app.core.paint_engine.PaintEngine.generate_personalized() so
-    # every project gets a palette actually computed from these inputs
-    # (room type, style, mood, colour preference, lighting, orientation,
-    # climate/city, budget, Vastu, occupancy) instead of a fixed swatch
-    # table. Anything left unanswered here triggers a targeted follow-up
-    # question rather than a silent guess.
-    mood: Optional[str] = None              # "calm", "energetic", "cozy", "dramatic", free text OK
-    color_preference: Optional[str] = None  # "vibrant", "pastel", "neutral", "earthy", "luxury", ...
-    natural_lighting: Optional[str] = None  # "low", "medium", "high" / descriptive
-    room_orientation: Optional[str] = None  # "north", "south-east", ... (per-room or house facing)
-    climate: Optional[str] = None           # "hot & humid", "cold", "temperate", free text OK (city is a fallback)
-    occupancy_notes: Optional[str] = None   # e.g. "young kids and a dog", or "none"
-    has_children: Optional[bool] = None
-    has_pets: Optional[bool] = None
-
     # Optional site/inspiration image — if the user shares a reference photo
     # or sketch, the layout style and proportions should take cues from it.
     background_image_base64: Optional[str] = None
@@ -505,16 +371,6 @@ class IntelligentRequirementEngine:
     MANDATORY_FIELDS = [
         "plot_width", "plot_depth", "floors_requested", "bhk_count",
         "family_members", "paint_theme", "extra_spaces",
-        # Paint-personalization inputs -- required so PaintEngine can
-        # compute a genuinely unique palette instead of falling back to
-        # unstated assumptions. (climate is intentionally NOT here: a city
-        # is always known by this point and PaintEngine treats city as a
-        # valid climate fallback signal. room_orientation and
-        # occupancy_notes are intentionally NOT required either -- they're
-        # still used automatically whenever mentioned in the prompt or
-        # passed explicitly, PaintEngine just fills a sensible, clearly
-        # noted default when they're not answered.)
-        "mood", "color_preference", "natural_lighting",
     ]
     
     CONDITIONAL_FIELDS = {
@@ -550,29 +406,6 @@ class IntelligentRequirementEngine:
             "family_members": "Before I size the rooms — how many people will actually be living here, counting kids and any elders? The BHK count alone doesn't tell me how many people are sharing the bathrooms or how big the common areas need to be.",
             "paint_theme": "What kind of look are you going for on the walls — light and airy, warm and earthy tones, something bolder and darker, or a clean neutral palette? A rough direction is enough.",
             "extra_spaces": "A few things change the layout quite a bit — do you need car parking (how many vehicles), a swimming pool, or any other space like a store room, home gym, or rooftop sit-out? List what applies, or just say 'none' if you want to keep it simple.",
-            # Paint-personalization questions -- pulled straight from
-            # PaintEngine.REQUIRED_PREFERENCE_QUESTIONS so the wording asked
-            # here always matches exactly what the engine itself considers
-            # "answered", with a sensible fallback if that import failed.
-            "mood": _PAINT_REQUIRED_QUESTIONS.get(
-                "mood",
-                "What mood should the space evoke — calm & soothing, energetic & lively, cozy & warm, "
-                "dramatic & bold, or something else?"),
-            "color_preference": _PAINT_REQUIRED_QUESTIONS.get(
-                "color_preference",
-                "What colour intensity do you prefer — vibrant, pastel, neutral, earthy, monochrome, "
-                "muted, bold, or rich luxury tones?"),
-            "natural_lighting": _PAINT_REQUIRED_QUESTIONS.get(
-                "natural_lighting",
-                "How much natural light does the home get through the day — low, medium, or high/abundant?"),
-            "room_orientation": _PAINT_REQUIRED_QUESTIONS.get(
-                "room_orientation",
-                "Which direction does the house / main living area mainly face — north, south, east, "
-                "west, or an in-between direction like north-east?"),
-            "occupancy_notes": _PAINT_REQUIRED_QUESTIONS.get(
-                "occupancy",
-                "Who will be using the home — any young children, elderly family members, or pets? "
-                "Say 'none' if not applicable."),
         }
         
         for field in missing:
@@ -749,6 +582,217 @@ class ArchitecturalGeometryEngine:
         return base
 
 
+# ── Dynamic Paint Recommendation Engine ────────────────────────────────────────
+
+class IntelligentPaintEngine:
+    """
+    AI-driven paint recommendations considering:
+    - Interior style
+    - Room purpose
+    - Climate/city
+    - Family composition
+    - Budget
+    - Sunlight exposure
+    """
+    
+    PAINT_PROFILES = {
+        "living_room": {
+            "modern": {
+                "primary": {"name": "Warm White", "hex": "#f5f1e8", "brand": "Asian Paints Apex", "temp": "warm"},
+                "accent": {"name": "Slate Grey", "hex": "#4a5568", "brand": "Asian Paints Royale"},
+                "finish": "satin",
+                "type": "exterior_emulsion",
+                "washable": True,
+                "moisture_resistant": False,
+                "durability_years": 5,
+                "suggested_liters": 20,
+                "cost_per_liter": 350,
+            },
+            "traditional": {
+                "primary": {"name": "Cream", "hex": "#fffdd0", "brand": "Berger DuraMax", "temp": "warm"},
+                "accent": {"name": "Terracotta", "hex": "#c2531e", "brand": "Berger DuraMax"},
+                "finish": "matte",
+                "type": "interior_emulsion",
+                "washable": True,
+                "moisture_resistant": False,
+                "durability_years": 4,
+                "suggested_liters": 22,
+                "cost_per_liter": 280,
+            },
+            "luxe": {
+                "primary": {"name": "Champagne", "hex": "#f3e5ab", "brand": "Nippon Paint Weatherbond", "temp": "warm"},
+                "accent": {"name": "Midnight Blue", "hex": "#2c3e50", "brand": "Nippon Paint Premium"},
+                "finish": "satin",
+                "type": "premium_emulsion",
+                "washable": True,
+                "moisture_resistant": True,
+                "durability_years": 7,
+                "suggested_liters": 20,
+                "cost_per_liter": 600,
+            },
+        },
+        "master_bedroom": {
+            "modern": {
+                "primary": {"name": "Soft Taupe", "hex": "#b8a69f", "brand": "Asian Paints Royale", "temp": "neutral"},
+                "accent": {"name": "Deep Navy", "hex": "#1a3a52", "brand": "Berger DuraMax"},
+                "finish": "eggshell",
+                "type": "interior_emulsion",
+                "washable": True,
+                "moisture_resistant": False,
+                "durability_years": 5,
+                "suggested_liters": 16,
+                "cost_per_liter": 320,
+            },
+            "traditional": {
+                "primary": {"name": "Dusty Rose", "hex": "#c08081", "brand": "Asian Paints Apex", "temp": "warm"},
+                "accent": {"name": "Wooden Brown", "hex": "#6b4423", "brand": "Berger"},
+                "finish": "matte",
+                "type": "interior_emulsion",
+                "washable": False,
+                "moisture_resistant": False,
+                "durability_years": 4,
+                "suggested_liters": 18,
+                "cost_per_liter": 250,
+            },
+            "luxe": {
+                "primary": {"name": "Silk Beige", "hex": "#d4c4b8", "brand": "Nippon Paint Premium", "temp": "warm"},
+                "accent": {"name": "Charcoal Grey", "hex": "#36454f", "brand": "Nippon Paint"},
+                "finish": "satin",
+                "type": "premium_emulsion",
+                "washable": True,
+                "moisture_resistant": True,
+                "durability_years": 7,
+                "suggested_liters": 16,
+                "cost_per_liter": 550,
+            },
+        },
+        "kitchen": {
+            "modern": {
+                "primary": {"name": "Clean White", "hex": "#fafafa", "brand": "Asian Paints Ultima", "temp": "cool"},
+                "accent": {"name": "Forest Green", "hex": "#2d5016", "brand": "Berger DuraMax"},
+                "finish": "semi_gloss",
+                "type": "kitchen_emulsion",
+                "washable": True,
+                "moisture_resistant": True,
+                "anti_fungal": True,
+                "durability_years": 6,
+                "suggested_liters": 14,
+                "cost_per_liter": 420,
+            },
+            "traditional": {
+                "primary": {"name": "Butter Cream", "hex": "#fff8dc", "brand": "Kansai Nerolac", "temp": "warm"},
+                "accent": {"name": "Mustard Yellow", "hex": "#c39d1d", "brand": "Kansai"},
+                "finish": "satin",
+                "type": "kitchen_emulsion",
+                "washable": True,
+                "moisture_resistant": True,
+                "anti_fungal": True,
+                "durability_years": 5,
+                "suggested_liters": 14,
+                "cost_per_liter": 350,
+            },
+            "luxe": {
+                "primary": {"name": "Pearl White", "hex": "#f0f8ff", "brand": "Nippon Paint Spot Coat", "temp": "cool"},
+                "accent": {"name": "Gold", "hex": "#d4af37", "brand": "Nippon Paint Premium"},
+                "finish": "gloss",
+                "type": "premium_kitchen",
+                "washable": True,
+                "moisture_resistant": True,
+                "anti_fungal": True,
+                "durability_years": 8,
+                "suggested_liters": 12,
+                "cost_per_liter": 750,
+            },
+        },
+        "bathroom": {
+            "modern": {
+                "primary": {"name": "Cool White", "hex": "#f8f9fa", "brand": "Asian Paints Ultima", "temp": "cool"},
+                "accent": {"name": "Light Blue", "hex": "#add8e6", "brand": "Berger Waterproof"},
+                "finish": "gloss",
+                "type": "waterproof_emulsion",
+                "washable": True,
+                "moisture_resistant": True,
+                "anti_fungal": True,
+                "mold_resistant": True,
+                "durability_years": 5,
+                "suggested_liters": 8,
+                "cost_per_liter": 500,
+            },
+            "traditional": {
+                "primary": {"name": "Eggshell White", "hex": "#f0f0f0", "brand": "Kansai Nerolac", "temp": "neutral"},
+                "accent": {"name": "Sea Blue", "hex": "#006994", "brand": "Kansai Waterproof"},
+                "finish": "satin",
+                "type": "waterproof_emulsion",
+                "washable": True,
+                "moisture_resistant": True,
+                "anti_fungal": True,
+                "mold_resistant": True,
+                "durability_years": 4,
+                "suggested_liters": 8,
+                "cost_per_liter": 420,
+            },
+            "luxe": {
+                "primary": {"name": "Marble White", "hex": "#fafaf8", "brand": "Nippon Paint Weatherbond", "temp": "neutral"},
+                "accent": {"name": "Aquamarine", "hex": "#7fffd4", "brand": "Nippon Paint Premium"},
+                "finish": "semi_gloss",
+                "type": "premium_waterproof",
+                "washable": True,
+                "moisture_resistant": True,
+                "anti_fungal": True,
+                "mold_resistant": True,
+                "durability_years": 8,
+                "suggested_liters": 8,
+                "cost_per_liter": 700,
+            },
+        },
+        "study": {
+            "modern": {
+                "primary": {"name": "Off White", "hex": "#faf0e6", "brand": "Asian Paints Apex", "temp": "warm"},
+                "accent": {"name": "Slate Blue", "hex": "#708090", "brand": "Berger DuraMax"},
+                "finish": "matte",
+                "type": "interior_emulsion",
+                "washable": True,
+                "moisture_resistant": False,
+                "durability_years": 5,
+                "suggested_liters": 10,
+                "cost_per_liter": 300,
+            },
+        },
+    }
+    
+    @staticmethod
+    def get_paint_recommendation(
+        room_name: str,
+        interior_style: str,
+        city: str,
+        budget: str = "mid",
+    ) -> Dict[str, Any]:
+        """Get intelligent paint recommendation for a room."""
+        
+        # Get base profile
+        profile = IntelligentPaintEngine.PAINT_PROFILES.get(room_name, {})
+        style_profile = profile.get(interior_style, profile.get("modern", {}))
+        
+        # Adjust for budget
+        if budget == "budget":
+            style_profile["cost_per_liter"] = int(style_profile.get("cost_per_liter", 300) * 0.6)
+            style_profile["brand"] = "Budget Brand"
+        elif budget == "luxury":
+            style_profile["cost_per_liter"] = int(style_profile.get("cost_per_liter", 300) * 1.5)
+        
+        # City-specific climate adjustments
+        high_humidity_cities = ["kolkata", "mumbai", "goa", "hyderabad"]
+        if city.lower() in high_humidity_cities:
+            style_profile["moisture_resistant"] = True
+            style_profile["anti_fungal"] = True
+            style_profile["durability_years"] = max(4, style_profile.get("durability_years", 5) - 1)
+        
+        total_cost = style_profile.get("suggested_liters", 10) * style_profile.get("cost_per_liter", 300)
+        style_profile["total_cost_inr"] = int(total_cost)
+        
+        return style_profile
+
+
 # ── Dynamic Cost Estimation Engine ─────────────────────────────────────────────
 
 class DynamicCostEngine:
@@ -878,15 +922,23 @@ class DynamicCostEngine:
         door_count = max(4, round(built_up_area / 200))
         window_count = max(6, round(built_up_area / 120))
 
-        # Paint cost: always prefer the actual theme-driven total from
-        # PaintEngine (keeps this number identical to paint_recommendations,
-        # since it's computed from the same personalized run). If that
-        # wasn't supplied -- e.g. ThemePaintEngine failed to import -- fall
-        # back to the generic rate-based percentage weight already computed
-        # above (painting_cost = total_construction_cost * w["painting"]),
-        # rather than any per-room hardcoded swatch/price table.
+        # Paint cost: prefer the actual theme-driven total (keeps this
+        # number identical to paint_recommendations); otherwise fall back to
+        # the old per-room IntelligentPaintEngine loop (style-only, no
+        # theme awareness) rather than the generic percentage weight, to
+        # preserve prior behaviour when ThemePaintEngine isn't available.
         if precomputed_paint_cost_inr is not None:
             painting_cost = precomputed_paint_cost_inr
+        elif rooms:
+            painting_cost = 0
+            for room in rooms:
+                room_paint = IntelligentPaintEngine.get_paint_recommendation(
+                    room.get("name", "bedroom"),
+                    "modern",
+                    city,
+                    budget
+                )
+                painting_cost += room_paint.get("total_cost_inr", 0)
 
         subtotal = (foundation_cost + structure_cost + brickwork_cost +
                     roofing_cost + flooring_cost + electrical_cost +
@@ -1031,8 +1083,6 @@ async def generate_floorplan(request: GenerationRequest):
         # one pooja room and 2 floors" generate immediately instead of
         # re-asking the user for things they already said.
         prompt_clues = _extract_clues_from_prompt(request.user_prompt)
-        print("Prompt:", request.user_prompt)
-        print("Extracted:", prompt_clues)
 
         clues = {
             "plot_width": _coerce_numeric(request.plot_width or session["answers"].get("plot_width") or prompt_clues.get("plot_width")),
@@ -1055,36 +1105,7 @@ async def generate_floorplan(request: GenerationRequest):
             "extra_spaces": request.extra_spaces or session["answers"].get("extra_spaces") or prompt_clues.get("extra_spaces"),
             "background_image_base64": request.background_image_base64 or session["answers"].get("background_image_base64"),
             "background_image_notes": request.background_image_notes or session["answers"].get("background_image_notes"),
-            # ── Paint-personalization clues ──────────────────────────────
-            "mood": request.mood or session["answers"].get("mood") or prompt_clues.get("mood"),
-            "color_preference": request.color_preference or session["answers"].get("color_preference") or prompt_clues.get("color_preference"),
-            "natural_lighting": request.natural_lighting or session["answers"].get("natural_lighting") or prompt_clues.get("natural_lighting"),
-            "room_orientation": (
-                request.room_orientation or session["answers"].get("room_orientation")
-                or prompt_clues.get("room_orientation") or request.road_direction or request.north_direction
-            ),
-            "climate": request.climate or session["answers"].get("climate") or prompt_clues.get("climate"),
-            "occupancy_notes": request.occupancy_notes or session["answers"].get("occupancy_notes") or prompt_clues.get("occupancy_notes"),
         }
-
-        # Occupancy flags: explicit boolean fields win; otherwise derive
-        # from the free-text occupancy_notes answer (negation-aware, so
-        # "no pets" is not read as "has pets"). occupancy_specified marks
-        # that the question has been answered at all (even "none"), so it
-        # isn't asked again and PaintEngine treats occupancy=[] as a real
-        # "no special needs" answer rather than "unanswered".
-        _occ_text = str(clues.get("occupancy_notes") or "")
-        clues["has_children"] = (
-            request.has_children if request.has_children is not None
-            else (session["answers"].get("has_children") if "has_children" in session["answers"] else _wants(_occ_text, "child", "kid", "kids", "children"))
-        )
-        clues["has_pets"] = (
-            request.has_pets if request.has_pets is not None
-            else (session["answers"].get("has_pets") if "has_pets" in session["answers"] else _wants(_occ_text, "pet", "pets", "dog", "cat"))
-        )
-        if not clues.get("elder_friendly"):
-            clues["elder_friendly"] = clues.get("elder_friendly") or _wants(_occ_text, "elder", "elderly", "senior citizen")
-        clues["occupancy_specified"] = bool(clues.get("occupancy_notes") and str(clues["occupancy_notes"]).strip())
 
         # Cache whatever we successfully parsed so subsequent clarification
         # round-trips (e.g. just answering "3 BHK") don't lose the rest.
@@ -1099,14 +1120,6 @@ async def generate_floorplan(request: GenerationRequest):
             "extra_spaces": request.extra_spaces,
             "background_image_base64": request.background_image_base64,
             "background_image_notes": request.background_image_notes,
-            "mood": request.mood,
-            "color_preference": request.color_preference,
-            "natural_lighting": request.natural_lighting,
-            "room_orientation": request.room_orientation,
-            "climate": request.climate,
-            "occupancy_notes": request.occupancy_notes,
-            "has_children": request.has_children,
-            "has_pets": request.has_pets,
         }.items():
             if v is not None and v != "":
                 session["answers"][k] = v
@@ -1369,12 +1382,15 @@ async def generate_floorplan(request: GenerationRequest):
                 total_rooms_all_floors, clues, request.user_prompt
             )
             if not paint_recommendations:
-                # PaintEngine itself failed to import in this deployment --
-                # no hardcoded colour table to fall back to; DynamicCostEngine
-                # still produces a category-wise cost estimate using the
-                # generic rate-based painting weight.
-                paint_recommendations = {}
-                theme_paint_total_cost = None
+                # ThemePaintEngine failed to import -- fall back to the old,
+                # theme-blind engine rather than returning nothing.
+                paint_recommendations = {
+                    r["name"]: IntelligentPaintEngine.get_paint_recommendation(
+                        r["name"], clues["interior_style"], clues["city"], clues["budget_range"]
+                    )
+                    for r in total_rooms_all_floors
+                }
+                theme_paint_total_cost = None  # let DynamicCostEngine compute it as before
 
             cost_report = DynamicCostEngine.calculate_cost_estimation(
                 rooms=total_rooms_all_floors,
@@ -1405,6 +1421,16 @@ async def generate_floorplan(request: GenerationRequest):
                 },
             }
 
+        engine_used = "real"
+        fallback_reason = None
+        if GeometryEngine is None:
+            engine_used = "fallback"
+            fallback_reason = (
+                "GeometryEngine import failed at startup -- backend.app.core.geometry.geometry_engine "
+                "(or one of its dependencies, e.g. adjacency_graph.py) is missing or broken on this "
+                "deployment. Check server startup logs for the ImportError."
+            )
+
         if GeometryEngine is not None:
             try:
                 adaptive_result = _run_real_engine("adaptive")
@@ -1413,8 +1439,19 @@ async def generate_floorplan(request: GenerationRequest):
                 # Real engine errored on this particular input (e.g. an
                 # unusual plot shape) -- don't fail the whole request, just
                 # fall back to the simpler engine so the user still gets a
-                # floor plan, and log the real error server-side.
-                print(f"GeometryEngine failed, falling back: {traceback.format_exc()}")
+                # floor plan. Previously this reason was ONLY printed to
+                # server-side logs (`print(...)`), which is invisible from
+                # the frontend/response -- meaning "why did it fall back?"
+                # could only ever be answered by someone with direct server
+                # log access. It's now also returned in the response itself
+                # (engine_used / fallback_reason below) so the caller can
+                # see immediately, from the API response alone, whether the
+                # real BSP/adjacency/Vastu pipeline actually ran or not, and
+                # why not.
+                tb = traceback.format_exc()
+                print(f"GeometryEngine failed, falling back: {tb}")
+                engine_used = "fallback"
+                fallback_reason = tb.strip().splitlines()[-1] if tb.strip() else "Unknown error"
                 adaptive_result = _run_fallback_engine("adaptive")
                 vastu_result = _run_fallback_engine("vastu")
         else:
@@ -1469,6 +1506,20 @@ async def generate_floorplan(request: GenerationRequest):
                 "interior_style": clues["interior_style"],
                 "budget_range": clues["budget_range"],
             },
+            # Diagnostic fields: "real" means the actual BSP/adjacency/Vastu
+            # pipeline in backend/app/core/geometry/geometry_engine.py
+            # produced this floor plan. "fallback" means it didn't run at
+            # all (import failed -- check fallback_reason and server startup
+            # logs) or raised an exception on this specific input (see
+            # fallback_reason for the exception message and server logs for
+            # the full traceback). If you're expecting the richer BSP layout
+            # (per-room Vastu placement, wet-area stacking, adjacency-based
+            # doors) and keep seeing engine_used == "fallback", the geometry
+            # package isn't actually wired up on this running deployment --
+            # redeploy/restart after confirming every file under
+            # backend/app/core/geometry/ is present.
+            "engine_used": engine_used,
+            "fallback_reason": fallback_reason,
         }
     
     except Exception as e:
@@ -1592,21 +1643,6 @@ def _extract_clues_from_prompt(prompt: str) -> Dict[str, Any]:
     floors_requested, and the API would (incorrectly) keep asking the user
     questions it could have answered itself from the prompt.
     """
-
-
-    _orientation_kw = [
-        "north",
-        "south",
-        "east",
-        "west",
-        "north east",
-        "north west",
-        "south east",
-        "south west",
-    ]
-
-    extracted = {}
-    ...
     extracted: Dict[str, Any] = {}
     if not prompt:
         return extracted
@@ -1675,60 +1711,6 @@ def _extract_clues_from_prompt(prompt: str) -> Dict[str, Any]:
     # ── Elder-friendly ────────────────────────────────────────────────
     if any(k in p for k in ("elder", "senior citizen", "wheelchair", "accessib")):
         extracted["elder_friendly"] = True
-
-    # ── Paint-personalization hints (mood / colour preference / lighting /
-    #    orientation / occupancy) — best-effort extraction so an explicit
-    #    prompt like "bright, vibrant colours, kids at home, faces north
-    #    east, gets lots of sunlight" doesn't get re-asked for any of this.
-    _mood_kw = (
-        "calm", "soothing", "serene", "tranquil", "peaceful", "energetic", "lively",
-        "cozy", "warm", "homely", "dramatic", "bold", "intense", "cheerful", "bright",
-        "happy", "sophisticated", "refined", "elegant", "romantic", "playful",
-        "luxurious", "moody", "airy",
-    )
-    for kw in _mood_kw:
-        if re.search(rf'\b{kw}\b', p):
-            extracted["mood"] = kw
-            break
-
-    _color_pref_kw = (
-        "vibrant", "pastel", "neutral", "earthy", "luxury", "monochrome",
-        "bold", "muted", "jewel tone", "jewel tones",
-    )
-    for kw in _color_pref_kw:
-        if kw in p:
-            extracted["color_preference"] = kw
-            break
-
-    if re.search(r'\blow\s*(?:natural\s*)?light\b|\bdim\b|\bnot much (?:sun|light)\b', p):
-        extracted["natural_lighting"] = "low"
-    elif re.search(r'\bhigh\s*(?:natural\s*)?light\b|\babundant\s*(?:sun|light)\b|\blots? of (?:sun|light)\b|\bvery bright\b', p):
-        extracted["natural_lighting"] = "high"
-    elif re.search(r'\bmedium\s*(?:natural\s*)?light\b|\bmoderate\s*(?:sun|light)\b', p):
-        extracted["natural_lighting"] = "medium"
-
-    
-    for kw in _orientation_kw:
-        pattern = kw.replace(" ", r"[\s-]?")
-
-        if re.search(rf"\b{pattern}\b\s*(?:facing|face)?", p) and (
-            f"{kw} facing" in p
-            or f"faces {kw}" in p
-            or f"facing {kw}" in p
-            or re.search(rf"\b{kw}\b", p)
-        ):
-            extracted["room_orientation"] = kw
-            break
-
-    _occ_bits = []
-    if _wants(p, "child", "kid", "kids", "children"):
-        _occ_bits.append("children")
-    if _wants(p, "pet", "pets", "dog", "cat"):
-        _occ_bits.append("pets")
-    if _wants(p, "elder", "elderly", "senior citizen"):
-        _occ_bits.append("elderly")
-    if _occ_bits:
-        extracted["occupancy_notes"] = ", ".join(_occ_bits)
 
     # ── Interior style ────────────────────────────────────────────────
     for style in ("modern", "traditional", "contemporary", "minimalist", "eclectic", "luxury", "luxe"):
