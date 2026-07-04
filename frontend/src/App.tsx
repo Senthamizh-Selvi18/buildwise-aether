@@ -240,6 +240,13 @@ export default function App() {
 
     }, 380);
 
+    // Render's free tier spins the backend down after ~15 min idle and
+    // takes 30-50s to wake back up on the next request. Without this, that
+    // delay just looks like the app hanging with no explanation.
+    const coldStartNotice = setTimeout(() => {
+      setLoadingStepText("Backend server is waking up (first request after idle can take up to a minute)...");
+    }, 6000);
+
 
 
     try {
@@ -258,7 +265,7 @@ export default function App() {
 
       // requires_clarification (current_answers carries those answers back).
 
-      const response = await fetch('http://127.0.0.1:8000/api/generate', {
+      const response = await fetch('https://buildwise-aether-backend.onrender.com/api/generate', {
 
         method: 'POST',
 
@@ -281,6 +288,7 @@ export default function App() {
       
 
       clearInterval(trackingSequence);
+      clearTimeout(coldStartNotice);
 
       
 
@@ -325,13 +333,19 @@ export default function App() {
 
 
     } catch (err: any) {
-
       clearInterval(trackingSequence);
-
+      clearTimeout(coldStartNotice);
       setIsProcessing(false);
-
-      setErrorBanner(err.message || "Failed to finalize sync pipeline channels to Aether computational mainframe.");
-
+      // fetch() throws a TypeError specifically for network-level failures
+      // (server unreachable, CORS rejection, DNS failure) -- distinct from
+      // the HTTP-status branch above, so the message actually points at
+      // the real cause instead of a generic "sync failure".
+      const isNetworkFailure = err instanceof TypeError;
+      setErrorBanner(
+        isNetworkFailure
+          ? "Could not reach the backend server. It may be waking up from idle (Render free tier) -- please wait ~30-60s and try again, or check that the backend URL is correct and running."
+          : (err.message || "Failed to finalize sync pipeline channels to Aether computational mainframe.")
+      );
     }
 
   };

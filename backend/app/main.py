@@ -375,7 +375,19 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    # allow_origins=["*"] combined with allow_credentials=True is invalid
+    # per the CORS spec -- browsers refuse to honor a wildcard origin when
+    # credentials are allowed, and will silently block the response client-side
+    # (shows up as "Failed to fetch" with no useful server-side error).
+    # Pinning explicit origins here is both spec-compliant and avoids
+    # accidentally allowing arbitrary sites to call this API with
+    # credentials attached.
+    allow_origins=[
+        "https://buildwise-aether-frontend.vercel.app",
+        "http://localhost:3000",       # local frontend dev server
+        "http://127.0.0.1:3000",
+        "http://localhost:5173",       # in case Vite is used instead of CRA/Next
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
