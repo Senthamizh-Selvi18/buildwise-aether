@@ -52,7 +52,7 @@ const MagneticActionButton = ({ children, onClick, disabled = false, premiumClas
 
   const mouseAxisY = useMotionValue(0);
 
-  
+
 
   const springConfig = { damping: 20, stiffness: 150, mass: 0.6 };
 
@@ -222,7 +222,7 @@ export default function App() {
 
     setMatrixProgress(4);
 
-    
+
 
     let operationalIndex = 0;
 
@@ -285,12 +285,12 @@ export default function App() {
 
       });
 
-      
+
 
       clearInterval(trackingSequence);
       clearTimeout(coldStartNotice);
 
-      
+
 
       if (!response.ok) {
 
@@ -298,7 +298,7 @@ export default function App() {
 
       }
 
-      
+
 
       const structuralPayload = await response.json();
 
@@ -306,7 +306,7 @@ export default function App() {
 
       setLoadingStepText("Vector layout structural trace finalized.");
 
-      
+
 
       setTimeout(() => {
 
@@ -314,7 +314,7 @@ export default function App() {
 
         setIsProcessing(false);
 
-        
+
 
         // Automated smooth viewport scroll execution directly to architectural results
 
@@ -382,7 +382,7 @@ export default function App() {
 
   return (
 
-    <motion.div 
+    <motion.div
 
       className="blueprint-viewport-container"
 
@@ -402,11 +402,11 @@ export default function App() {
 
         <div className="studio-content-width" style={{ maxWidth: '1000px' }}>
 
-          
+
 
           {/* Architectural System Active Pulse Badge */}
 
-          <motion.div 
+          <motion.div
 
             initial={{ opacity: 0, y: -15 }}
 
@@ -418,7 +418,7 @@ export default function App() {
 
           >
 
-            <motion.span 
+            <motion.span
 
               animate={{ opacity: [0.3, 1, 0.3], scale: [0.95, 1.05, 0.95] }}
 
@@ -432,7 +432,7 @@ export default function App() {
 
           </motion.div>
 
-          
+
 
           {/* Main Title Typography Scale */}
 
@@ -442,11 +442,11 @@ export default function App() {
 
           </h1>
 
-          
+
 
           {/* Subtitle Minimal Elements */}
 
-          <motion.p 
+          <motion.p
 
             initial={{ opacity: 0, y: 15 }}
 
@@ -462,9 +462,9 @@ export default function App() {
 
           </motion.p>
 
-          
 
-          <motion.div 
+
+          <motion.div
 
             initial={{ opacity: 0, y: 15 }}
 
@@ -474,7 +474,7 @@ export default function App() {
 
           >
 
-            <button 
+            <button
 
               onClick={() => sectionRefs.input.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })}
 
@@ -502,11 +502,11 @@ export default function App() {
 
       <div className="studio-content-width" style={{ maxWidth: '1200px', paddingBottom: '120px' }}>
 
-        
+
 
         {/* PREMIUM STRUCTURAL INPUT ELEMENT FORM */}
 
-        <motion.fieldset 
+        <motion.fieldset
 
           ref={sectionRefs.input}
 
@@ -524,7 +524,7 @@ export default function App() {
 
           </div>
 
-          
+
 
           <p style={{ margin: '0 0 28px 0', fontSize: '13.2px', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
 
@@ -554,7 +554,7 @@ export default function App() {
 
           {errorBanner && (
 
-            <motion.div 
+            <motion.div
 
               initial={{ opacity: 0, scale: 0.99 }}
 
@@ -586,11 +586,11 @@ export default function App() {
 
           >
 
-            <div style={{ 
+            <div style={{
 
-              width: '100%', 
+              width: '100%',
 
-              height: '54px', 
+              height: '54px',
 
               background: 'linear-gradient(135deg, #FFFFFF 0%, var(--gold-light) 50%, var(--gold-core) 100%)',
 
@@ -640,7 +640,7 @@ export default function App() {
 
           {isProcessing && (
 
-            <motion.div 
+            <motion.div
 
               initial={{ opacity: 0, y: 15, scale: 0.99 }}
 
@@ -658,7 +658,7 @@ export default function App() {
 
               <div style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
 
-                <motion.div 
+                <motion.div
 
                   animate={{ rotate: 360 }}
 
@@ -688,7 +688,7 @@ export default function App() {
 
                   </div>
 
-                  <motion.div 
+                  <motion.div
 
                     key={loadingStepText}
 
@@ -756,21 +756,21 @@ export default function App() {
 
                   const QUICK_OPTIONS: Record<string, string[]> = {
 
-                    plot_width:        ['20 ft', '25 ft', '30 ft', '40 ft', '50 ft', '60 ft'],
+                    plot_width: ['20 ft', '25 ft', '30 ft', '40 ft', '50 ft', '60 ft'],
 
-                    plot_depth:        ['30 ft', '40 ft', '50 ft', '60 ft', '80 ft', '100 ft'],
+                    plot_depth: ['30 ft', '40 ft', '50 ft', '60 ft', '80 ft', '100 ft'],
 
-                    floors_requested:  ['1 floor', '2 floors', '3 floors', '4 floors'],
+                    floors_requested: ['1 floor', '2 floors', '3 floors', '4 floors'],
 
-                    bhk_count:         ['1 BHK', '2 BHK', '3 BHK', '4 BHK', '5 BHK'],
+                    bhk_count: ['1 BHK', '2 BHK', '3 BHK', '4 BHK', '5 BHK'],
 
-                    road_direction:    ['North', 'South', 'East', 'West'],
+                    road_direction: ['North', 'South', 'East', 'West'],
 
-                    interior_style:    ['Modern', 'Traditional', 'Minimalist', 'Contemporary', 'Luxe'],
+                    interior_style: ['Modern', 'Traditional', 'Minimalist', 'Contemporary', 'Luxe'],
 
-                    parking_slots:     ['0', '1', '2', '3'],
+                    parking_slots: ['0', '1', '2', '3'],
 
-                    paint_theme:       ['Modern', 'Universe theme', 'Natural theme', 'Ocean theme', 'Luxury', 'Pastel', 'Monochrome'],
+                    paint_theme: ['Modern', 'Universe theme', 'Natural theme', 'Ocean theme', 'Luxury', 'Pastel', 'Monochrome'],
 
                   };
 
@@ -778,21 +778,21 @@ export default function App() {
 
                   const PLACEHOLDERS: Record<string, string> = {
 
-                    plot_width:       'e.g. 30',
+                    plot_width: 'e.g. 30',
 
-                    plot_depth:       'e.g. 40',
+                    plot_depth: 'e.g. 40',
 
                     floors_requested: 'e.g. 2',
 
-                    bhk_count:        'e.g. 3',
+                    bhk_count: 'e.g. 3',
 
-                    road_direction:   'e.g. North',
+                    road_direction: 'e.g. North',
 
-                    interior_style:   'e.g. Modern',
+                    interior_style: 'e.g. Modern',
 
-                    parking_slots:    'e.g. 1',
+                    parking_slots: 'e.g. 1',
 
-                    paint_theme:      "e.g. Universe theme, Natural theme, or any colours you'd like",
+                    paint_theme: "e.g. Universe theme, Natural theme, or any colours you'd like",
 
                   };
 
@@ -1034,7 +1034,7 @@ export default function App() {
 
            ====================================================================== */}
 
-        
+
 
         {/* DESIGN SUITE OPTION ALPHA */}
 
@@ -1270,9 +1270,9 @@ export default function App() {
 
         {/* COMPARATIVE STRUCTURAL PERFORMANCE FIELDSETS */}
 
-        <motion.fieldset 
+        <motion.fieldset
 
-          ref={sectionRefs.comparison} 
+          ref={sectionRefs.comparison}
 
           {...viewportFadeSlideInConfig}
 
@@ -1320,9 +1320,9 @@ export default function App() {
 
         {/* MATERIAL COST ESTIMATION SUMMARY SPREADSHEETS */}
 
-        <motion.fieldset 
+        <motion.fieldset
 
-          ref={sectionRefs.cost} 
+          ref={sectionRefs.cost}
 
           {...viewportFadeSlideInConfig}
 
@@ -1342,7 +1342,7 @@ export default function App() {
 
           </p>
 
-          
+
 
           {backendPayload?.options?.OPTION_A_SPACE?.cost_estimation ? (
 
@@ -1406,9 +1406,9 @@ export default function App() {
 
         {/* CHROMATIC PAINT TREATMENT SEGMENTS */}
 
-        <motion.fieldset 
+        <motion.fieldset
 
-          ref={sectionRefs.paint} 
+          ref={sectionRefs.paint}
 
           {...viewportFadeSlideInConfig}
 
