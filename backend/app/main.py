@@ -505,16 +505,16 @@ class IntelligentRequirementEngine:
     MANDATORY_FIELDS = [
         "plot_width", "plot_depth", "floors_requested", "bhk_count",
         "family_members", "paint_theme", "extra_spaces",
-        # NOTE: mood / color_preference / natural_lighting used to be listed
-        # here too, which forced a SECOND round of clarification questions
-        # after this one -- confusing, since nothing downstream actually
-        # requires them: _generate_theme_driven_paint_recommendations()
-        # already calls ThemePaintEngine.generate_personalized(...,
-        # allow_partial=True), which fills a clearly-noted default for any
-        # of these three when they're unanswered. Making them "mandatory"
-        # here contradicted that and just blocked generation for longer
-        # than necessary. They're still picked up automatically whenever
-        # the user does mention them in the prompt or answers them anyway.
+        # Paint-personalization inputs -- required so PaintEngine can
+        # compute a genuinely unique palette instead of falling back to
+        # unstated assumptions. (climate is intentionally NOT here: a city
+        # is always known by this point and PaintEngine treats city as a
+        # valid climate fallback signal. room_orientation and
+        # occupancy_notes are intentionally NOT required either -- they're
+        # still used automatically whenever mentioned in the prompt or
+        # passed explicitly, PaintEngine just fills a sensible, clearly
+        # noted default when they're not answered.)
+        "mood", "color_preference", "natural_lighting",
     ]
     
     CONDITIONAL_FIELDS = {
