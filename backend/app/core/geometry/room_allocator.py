@@ -66,19 +66,6 @@ class RoomAllocator:
                    RoomAllocator.allocate(split_x, y, w - (split_x - x), h, rooms2, not is_horizontal, mode)
                    
         else:
-            # Fallback axis split if strict dimensional constraints force it.
-            # w and h are both too small here to guarantee a full
-            # MIN_ROOM_SPAN on both sides (that's *why* we're in this
-            # branch) -- but the split point must still be clamped to some
-            # hard floor. Left totally unclamped, deep recursion on
-            # room-dense floors (e.g. several bedrooms + attached
-            # bathrooms upstairs) can push a partition's width or height
-            # to near zero. A near-zero bbox doesn't just look small --
-            # SVGRenderer clips each room's label to its own bbox size, so
-            # a degenerate bbox makes the room's name/dimensions (and
-            # fill) disappear from the render entirely. Clamping to a
-            # reduced hard minimum keeps every room visibly, legibly
-            # rendered even when the ideal 6ft minimum isn't achievable.
             HARD_MIN_SPAN = 2.0  # smallest allowable span (ft) -- still visible/legible
             if is_horizontal:
                 span = (max(HARD_MIN_SPAN, min(w - HARD_MIN_SPAN, w * ratio))

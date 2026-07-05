@@ -425,10 +425,7 @@ class GeometryEngine:
                 if upper_r:
                     chunk = upper_r[uf * beds_per: (uf + 1) * beds_per]
                     floor += chunk if chunk else upper_r[-1:]
-                # else: no bedroom-category rooms were requested at all --
-                # leave this floor without a synthetic "Bedroom" entry.
-                # Inventing one would add a room the user never asked for.
-
+                    
                 # Attached bathrooms (wet-area stacking: same cluster as bedrooms)
                 if rem_baths:
                     bchunk = rem_baths[uf * baths_per: (uf + 1) * baths_per]
@@ -442,22 +439,11 @@ class GeometryEngine:
                     fchunk = upper_flex[uf * uflex_per: (uf + 1) * uflex_per]
                     floor += fchunk
 
-                # NOTE: previously always appended a "Balcony" to the first
-                # upper floor even when the user never asked for one -- that
-                # contradicted the "don't invent rooms the user didn't
-                # request" rule the bedroom/bathroom logic above already
-                # follows. Balcony is now only placed here if it was
-                # actually part of required_rooms (i.e. it's already
-                # somewhere in floor/upper_r/upper_flex from the caller);
-                # nothing synthetic is added.
-
                 # Staircase on every floor
                 if stairs:
                     floor.append(stairs[0])
 
                 if not floor:
-                    # Nothing was required to put on this floor -- leave it
-                    # empty rather than inventing a generic Bedroom/Bathroom.
                     floor = []
 
                 # Sort upper floor rooms

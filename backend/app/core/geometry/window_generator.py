@@ -54,9 +54,6 @@ class WindowGenerator:
     ) -> List[PortalGeometry]:
         portals: List[PortalGeometry] = []
 
-        # Define the main entrance exclusion zone, centered on the entrance
-        # wall segment (the same one DoorGenerator placed the front door
-        # on), so windows never get drawn through the front door.
         entrance_exclusion = None
         if entrance_segment is not None:
             ex1, ey1, ex2, ey2 = entrance_segment

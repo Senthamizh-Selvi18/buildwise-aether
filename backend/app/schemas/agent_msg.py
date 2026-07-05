@@ -1,4 +1,4 @@
-# backend/app/schemas/agent_msg.py
+
 from pydantic import BaseModel, Field
 from typing import List, Optional
 

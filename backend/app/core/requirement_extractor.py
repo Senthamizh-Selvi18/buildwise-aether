@@ -1,5 +1,4 @@
-# app/core/requirement_extractor.py
-# Sourced from document index 2 — no changes to class logic
+
 import re
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass

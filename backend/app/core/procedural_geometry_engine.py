@@ -1,4 +1,4 @@
-# app/core/procedural_geometry_engine.py
+
 import uuid, math
 from typing import List
 from dataclasses import dataclass

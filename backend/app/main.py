@@ -1,8 +1,3 @@
-# backend/app/main.py
-# BuildWise Aether — Professional Architectural Planning System v4.0
-# Enterprise-grade floor planning with intelligent requirement collection, 
-# architect-level geometry, dynamic paint recommendations, and real-time cost estimation
-
 import re
 import os
 import sys
@@ -122,32 +117,10 @@ except Exception as _geo_import_exc:
 # question instead of silently guessed.
 def _load_paint_engine_module():
     """
-    Loads app.core.paint_engine.PaintEngine (the real, computed-colour
-    engine) as reliably as possible.
-
-    ROOT CAUSE of "paint recommendations show generic placeholder text
-    instead of the computed per-room palette": the two import attempts
-    this used to try (`app.core.paint_engine` / `backend.app.core.paint_engine`)
-    both silently swallowed ONLY `ImportError`. On some deployment layouts
-    neither dotted path resolves (e.g. the service root doesn't happen to
-    have an `app` or `backend` package on sys.path even though the *file*
-    paint_engine.py is sitting right next to this one on disk), so both
-    attempts failed, ThemePaintEngine was silently set to None, and every
-    downstream caller quietly returned `{}` for paint_recommendations. The
-    frontend then has nothing real to render and falls back to its own
-    generic, non-personalized placeholder copy -- which is exactly the
-    "Architectural Alabaster / Slate Velvet" style boilerplate text (not
-    computed, not per-project, identical every time), instead of the real
-    HSL-computed, per-room, fully-explained palette this engine produces.
-
-    Fix: try every plausible dotted path AND, as a last resort, load
-    paint_engine.py directly off disk by searching the directories this
-    file itself lives in / near, via importlib -- so as long as the file
-    exists anywhere sane relative to this one, it will be found and used
-    instead of leaving paint recommendations empty.
-
-    NOTE: this touches ONLY how PaintEngine is located/imported. It does
-    not change geometry, layout, or SVG rendering in any way.
+    Loads the paint engine module as reliably as possible, trying every
+    plausible import path and, as a last resort, loading the .py file
+    directly off disk near this file. This ONLY changes how the module is
+    located -- it does not touch geometry/floor-plan code at all.
     """
     import importlib
     import importlib.util
@@ -165,9 +138,6 @@ def _load_paint_engine_module():
         except Exception:
             continue
 
-    # Last resort: search for paint_engine.py on disk near this file and
-    # load it directly, bypassing the package/import-path guesswork above
-    # entirely.
     this_dir = os.path.dirname(os.path.abspath(__file__))
     search_roots = [
         this_dir,
@@ -203,9 +173,7 @@ else:
     _preferences_from_legacy_clues = None
     _PAINT_REQUIRED_QUESTIONS = {}
     print("=" * 70)
-    print("PaintEngine FAILED TO IMPORT -- paint recommendations will be empty "
-          "and the frontend will show generic placeholder colours instead of "
-          "the computed, per-room palette.")
+    print("PaintEngine FAILED TO IMPORT -- paint recommendations will be empty.")
     print(PAINT_ENGINE_IMPORT_ERROR)
     print("=" * 70)
 
@@ -374,34 +342,62 @@ def _theme_priority_list_from_clues(clues: Dict[str, Any], user_prompt: str) -> 
 
 def _paint_rec_to_legacy_shape(rec) -> Dict[str, Any]:
     """
-    Adapts the new PaintEngine's flat PaintRecommendation into the same
-    nested {"primary": {...}, "accent": {...}, ...} shape
-    IntelligentPaintEngine.get_paint_recommendation() used to return, so
-    existing frontend code reading those keys keeps working -- only the
-    underlying colours/rationale are now actually theme-driven.
+    Adapts a PaintRecommendation into the same nested
+    {"primary": {...}, "accent": {...}, ...} shape the frontend expects.
+
+    Tolerant of TWO different PaintRecommendation shapes, since different
+    versions of the paint engine have been in play:
+      - newer shape: rec.primary_paint_name / rec.primary_hex / ...,
+        rec.finish_type, rec.recommended_for_moisture, rec.theme_detected,
+        rec.matched_keywords (via PaintRecommendation._fill_legacy_aliases())
+      - older/simpler shape (e.g. paint_agent.py): rec.wall / rec.ceiling /
+        rec.accent / rec.trim (each a SurfaceColor with .name/.hex/
+        .temperature), rec.wall_finish, rec.moisture_resistant, and no
+        theme_detected/matched_keywords fields at all.
+    Whichever shape is actually present, this reads it via getattr with a
+    fallback so real per-room colours/rationale always come through
+    instead of raising AttributeError (which previously surfaced as
+    "paint recommendations don't change" -- the call was failing before
+    it ever got returned to the frontend).
     """
+    wall = getattr(rec, "wall", None)
+    accent_surface = getattr(rec, "accent", None)
+
+    primary_name = getattr(rec, "primary_paint_name", None) or (wall.name if wall else None)
+    primary_hex = getattr(rec, "primary_hex", None) or (wall.hex if wall else None)
+    primary_brand = getattr(rec, "primary_brand", None) or getattr(rec, "brand_tier", None)
+    primary_temp = getattr(rec, "primary_color_temp", None) or (wall.temperature if wall else None)
+
+    accent_name = getattr(rec, "accent_paint_name", None) or (accent_surface.name if accent_surface else None)
+    accent_hex = getattr(rec, "accent_hex", None) or (accent_surface.hex if accent_surface else None)
+    accent_brand = getattr(rec, "accent_brand", None) or getattr(rec, "brand_tier", None)
+
+    washability = getattr(rec, "washability", "medium")
+
     return {
         "room_name": rec.room_name,
         "primary": {
-            "name": rec.primary_paint_name,
-            "hex": rec.primary_hex,
-            "brand": rec.primary_brand,
-            "temp": rec.primary_color_temp,
+            "name": primary_name,
+            "hex": primary_hex,
+            "brand": primary_brand,
+            "temp": primary_temp,
         },
         "accent": {
-            "name": rec.accent_paint_name,
-            "hex": rec.accent_hex,
-            "brand": rec.accent_brand,
+            "name": accent_name,
+            "hex": accent_hex,
+            "brand": accent_brand,
         },
-        "finish": rec.finish_type,
-        "washable": rec.washability in ("medium", "high"),
-        "moisture_resistant": rec.recommended_for_moisture,
-        "durability_years": rec.durability_years,
-        "suggested_liters": rec.liters_required,
-        "cost_per_liter": rec.cost_per_liter_inr,
-        "total_cost_inr": rec.total_cost_inr,
-        "theme_detected": rec.theme_detected,
-        "matched_keywords": rec.matched_keywords,
+        "finish": getattr(rec, "finish_type", None) or getattr(rec, "wall_finish", None),
+        "washable": washability in ("medium", "high"),
+        "moisture_resistant": getattr(rec, "recommended_for_moisture", None)
+                              if hasattr(rec, "recommended_for_moisture")
+                              else getattr(rec, "moisture_resistant", False),
+        "durability_years": getattr(rec, "durability_years", None),
+        "suggested_liters": getattr(rec, "liters_required", None),
+        "cost_per_liter": getattr(rec, "cost_per_liter_inr", None),
+        "total_cost_inr": getattr(rec, "total_cost_inr", None),
+        "theme_detected": getattr(rec, "theme_detected", None),
+        "matched_keywords": getattr(rec, "matched_keywords", []),
         "rationale": rec.rationale,
     }
 
@@ -471,15 +467,19 @@ def _generate_theme_driven_paint_recommendations(
     ]
 
     prefs = _build_paint_preferences_from_clues(clues, user_prompt)
-    if prefs is not None:
-        # allow_partial=True: by the time this is called, STEP 2 of the
-        # generation endpoint has already forced the user through the
-        # required-preference follow-up questions, so any preference still
-        # unanswered here is a genuinely optional one -- PaintEngine fills
-        # it with a clearly-noted default rather than blocking generation.
+    if prefs is not None and hasattr(ThemePaintEngine, "generate_personalized"):
+        # Newer PaintEngine API.
         result = ThemePaintEngine.generate_personalized(paint_rooms, prefs, allow_partial=True)
         recs = result.recommendations
-    else:
+    elif prefs is not None and hasattr(ThemePaintEngine, "generate"):
+        # Older/simpler PaintEngine API (e.g. paint_agent.py) -- same
+        # PaintPreferences input, same computed-per-room output, just
+        # under the original method name from before "generate_personalized"
+        # existed. This is what keeps paint recommendations working when
+        # the deployed paint_engine.py is this earlier version.
+        result = ThemePaintEngine.generate(paint_rooms, prefs, allow_partial=True)
+        recs = result.recommendations
+    elif hasattr(ThemePaintEngine, "generate_layered"):
         # PaintPreferences/preferences_from_legacy_clues weren't importable
         # (older paint_engine.py) -- fall back to the legacy free-text-only
         # entry point so the app still functions.
@@ -488,6 +488,8 @@ def _generate_theme_driven_paint_recommendations(
             paint_rooms, theme_priority, city=clues.get("city") or "bangalore",
             budget=clues.get("budget_range") or "mid",
         )
+    else:
+        return {}, 0.0
 
     total_cost = sum(r.total_cost_inr for r in recs)
     by_room_name = {
@@ -1131,6 +1133,15 @@ def engine_status():
             "the older ArchitecturalGeometryEngine fallback, which produces "
             "a different (simpler, non-BSP) layout than the primary engine."
         ),
+        "paint_engine_active": ThemePaintEngine is not None,
+        "paint_engine_import_error": PAINT_ENGINE_IMPORT_ERROR,
+        "paint_engine_api": (
+            "generate_personalized" if ThemePaintEngine is not None and hasattr(ThemePaintEngine, "generate_personalized")
+            else "generate" if ThemePaintEngine is not None and hasattr(ThemePaintEngine, "generate")
+            else "generate_layered" if ThemePaintEngine is not None and hasattr(ThemePaintEngine, "generate_layered")
+            else None
+        ),
+        "floorplan_svg_source": "always regenerated in-app via _generate_professional_svg (external engine's own svg_dump is ignored)",
     }
 
 
@@ -1377,10 +1388,24 @@ async def generate_floorplan(request: GenerationRequest):
             for floor_idx, fd in enumerate(result["floors"]):
                 doors = [p for p in fd["portals"] if p["type"] == "door"]
                 windows = [p for p in fd["portals"] if p["type"] == "window"]
+
+                # The external GeometryEngine's own svg_dump is confirmed
+                # (via /api/debug/engine-status showing real_geometry_engine_active
+                # = true, plus CADBlueprint.tsx rendering svg_dump verbatim
+                # with no client-side label overlay) to be the actual
+                # source of the duplicated/oversized room-name text -- that
+                # bug lives inside a module this codebase imports but does
+                # not contain. Rather than trust it, we regenerate the SVG
+                # ourselves from the same room/plot data using
+                # _generate_professional_svg, which is shape-agnostic (see
+                # _normalize_room_for_svg) and draws each room's name +
+                # dimensions exactly once, correctly sized.
+                svg_dump = _generate_professional_svg(fd["rooms"], plot_w, plot_d, floor_idx)
+
                 out_floors.append({
                     "floor_name": fd["floor_name"],
                     "level": floor_idx,
-                    "svg_dump": _overlay_room_name_labels(fd["svg_dump"], fd["rooms"], plot_w, plot_d),
+                    "svg_dump": svg_dump,
                     "rooms": fd["rooms"],
                     "doors": doors,
                     "windows": windows,
@@ -2069,78 +2094,46 @@ def _build_required_rooms(clues: Dict[str, Any], bhk: int, floors: int, user_pro
 
 # ── Professional SVG Generation ────────────────────────────────────────────────
 
-def _overlay_room_name_labels(svg_dump: str, rooms: List[Dict[str, Any]], plot_w: float, plot_d: float) -> str:
+def _normalize_room_for_svg(room: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Appends ONLY a room-name text label above each room onto an existing
-    floor-plan SVG string. Does not redraw, move, resize, recolor, or
-    otherwise touch anything already in `svg_dump` -- the floor plan
-    itself (walls, room shapes, doors, windows, dimension lines, colours)
-    stays exactly as produced by whichever geometry engine ran. This
-    exists purely to add the missing room-name labels when the floor
-    plan was generated by an engine whose own SVG output doesn't already
-    label rooms.
-
-    If anything about `svg_dump`'s structure or a room's fields is
-    unexpected, this fails safe and returns the original `svg_dump`
-    completely unchanged rather than risk corrupting the floor plan.
+    Normalizes a room dict from ANY geometry engine into one flat shape:
+    {name, x1, y1, width, height, area_sqft}. Needed because the external
+    backend.app.core.geometry.geometry_engine.GeometryEngine (confirmed
+    active via /api/debug/engine-status) has a room shape this file has
+    never had visibility into, and CADBlueprint.tsx supports two
+    different conventions ({x1,y1,x2,y2} and {x,y,width,height}) --
+    proof that room shape genuinely varies by source.
     """
-    if not svg_dump or "</svg>" not in svg_dump or not rooms:
-        return svg_dump
+    if not isinstance(room, dict):
+        room = {
+            k: getattr(room, k)
+            for k in ("id", "name", "x1", "y1", "x2", "y2", "x", "y", "area", "area_sqft", "width", "height")
+            if hasattr(room, k)
+        }
 
-    try:
-        # Figure out the SVG's own coordinate space so labels land in the
-        # right place regardless of what scale/margin convention the
-        # engine that drew this SVG used.
-        vb_match = re.search(r'viewBox="([\-\d\.]+)\s+([\-\d\.]+)\s+([\-\d\.]+)\s+([\-\d\.]+)"', svg_dump)
-        if vb_match:
-            vb_minx, vb_miny, vb_w, vb_h = (float(v) for v in vb_match.groups())
-        else:
-            w_match = re.search(r'width="([\d\.]+)"', svg_dump)
-            h_match = re.search(r'height="([\d\.]+)"', svg_dump)
-            vb_minx, vb_miny = 0.0, 0.0
-            vb_w = float(w_match.group(1)) if w_match else float(plot_w)
-            vb_h = float(h_match.group(1)) if h_match else float(plot_d)
+    name = room.get("name") or room.get("room_name") or "Room"
+    bbox = room.get("bbox") if isinstance(room.get("bbox"), dict) else None
 
-        scale_x = (vb_w / plot_w) if plot_w else 1.0
-        scale_y = (vb_h / plot_d) if plot_d else 1.0
+    x1 = room.get("x1", room.get("x", bbox.get("x1") if bbox else 0)) or 0
+    y1 = room.get("y1", room.get("y", bbox.get("y1") if bbox else 0)) or 0
+    x2 = room.get("x2", bbox.get("x2") if bbox else None)
+    y2 = room.get("y2", bbox.get("y2") if bbox else None)
 
-        label_svg_parts = []
-        for room in rooms:
-            r = room if isinstance(room, dict) else {
-                k: getattr(room, k) for k in ("name", "x1", "y1", "x2", "y2", "width", "height")
-                if hasattr(room, k)
-            }
-            name = r.get("name") or r.get("room_name") or "Room"
-            bbox = r.get("bbox") if isinstance(r.get("bbox"), dict) else None
+    width = room.get("width")
+    height = room.get("height")
+    if width is None:
+        width = (x2 - x1) if x2 is not None else 10.0
+    if height is None:
+        height = (y2 - y1) if y2 is not None else 10.0
 
-            rx1 = r.get("x1", bbox.get("x1") if bbox else None)
-            ry1 = r.get("y1", bbox.get("y1") if bbox else None)
-            rx2 = r.get("x2", bbox.get("x2") if bbox else None)
-            width = r.get("width")
-            if rx1 is None or ry1 is None:
-                continue  # can't place a label without a position; skip this room only
+    area = room.get("area_sqft", room.get("area", round(width * height, 2)))
 
-            if width is None:
-                width = (rx2 - rx1) if rx2 is not None else 0.0
-
-            label = str(name).replace("_", " ").title()
-            cx = vb_minx + (float(rx1) + float(width) / 2.0) * scale_x
-            # "Above it": just inside the top edge of the room's own box.
-            top_y = vb_miny + float(ry1) * scale_y + 12
-
-            label_svg_parts.append(
-                f'<text x="{cx:.1f}" y="{top_y:.1f}" text-anchor="middle" '
-                f'font-family="Arial, Helvetica, sans-serif" font-size="11" '
-                f'font-weight="bold" fill="#c8a84b">{label}</text>'
-            )
-
-        if not label_svg_parts:
-            return svg_dump
-
-        return svg_dump.replace("</svg>", "".join(label_svg_parts) + "</svg>")
-    except Exception:
-        # Never let a labeling problem break the floor plan itself.
-        return svg_dump
+    return {
+        "name": name,
+        "x1": float(x1), "y1": float(y1),
+        "width": max(0.1, float(width)), "height": max(0.1, float(height)),
+        "area_sqft": float(area),
+    }
 
 
 def _generate_professional_svg(
@@ -2221,6 +2214,8 @@ def _generate_professional_svg(
         "study": "#e8e8d0",
     }
     
+    rooms = [_normalize_room_for_svg(r) for r in rooms]
+
     # Draw rooms
     for room in rooms:
         rx1 = int(room["x1"] * SCALE) + MARGIN
@@ -2237,23 +2232,50 @@ def _generate_professional_svg(
             f'fill="{fill}" stroke="#c8a84b" stroke-width="1.5" rx="2" '
             f'fill-opacity="0.2" stroke-dasharray="0"/>'
         )
-        
-        # Room label
+
         cx = rx1 + rw // 2
         cy = ry1 + rh // 2
-        label = room.get("name", "Room").replace("_", " ").title()
-        fsize = max(8, min(12, rw // max(1, len(label) // 2)))
-        
+        label = room.get("name", "Room").replace("_", " ").upper()
+        dim = f"{room.get('width', 0):.1f}' x {room.get('height', 0):.1f}' - {room.get('area_sqft', 0):.0f} SQ.FT"
+
+        # Font size driven by the room's actual box size so it never
+        # overflows into neighbouring rooms, with a guaranteed-legible
+        # floor -- this is the single place room labels are drawn, so
+        # there is no way for a duplicate/oversized label to appear.
+        fsize = max(7, min(13, rw // max(4, len(label))))
+        max_chars_per_line = max(4, rw // max(1, fsize - 2))
+
+        if len(label) > max_chars_per_line and " " in label:
+            words = label.split(" ")
+            line1, line2 = [], []
+            cur_len = 0
+            for w in words:
+                if cur_len + len(w) <= max_chars_per_line or not line1:
+                    line1.append(w)
+                    cur_len += len(w) + 1
+                else:
+                    line2.append(w)
+            label_lines = [" ".join(line1)] + ([" ".join(line2)] if line2 else [])
+        else:
+            label_lines = [label]
+
+        n_lines = len(label_lines)
+        line_height = fsize + 2
+        block_height = n_lines * line_height + (fsize - 1)
+        start_y = cy - block_height / 2 + fsize
+
+        for i, line_text in enumerate(label_lines):
+            ly = start_y + i * line_height
+            lines.append(
+                f'<text x="{cx}" y="{ly:.1f}" text-anchor="middle" '
+                f'font-size="{fsize}" font-weight="bold" fill="#c8a84b">{line_text}</text>'
+            )
+
+        dim_y = start_y + n_lines * line_height
+        dim_fsize = max(6, fsize - 3)
         lines.append(
-            f'<text x="{cx}" y="{cy - 4}" text-anchor="middle" '
-            f'font-size="{fsize}" font-weight="bold" fill="#c8a84b">{label}</text>'
-        )
-        
-        # Dimensions
-        dim = f"{room.get('width', 0):.0f}\'×{room.get('height', 0):.0f}\'"
-        lines.append(
-            f'<text x="{cx}" y="{cy + 8}" text-anchor="middle" '
-            f'font-size="{max(7, fsize - 2)}" fill="#8a7a3a">{dim}</text>'
+            f'<text x="{cx}" y="{dim_y:.1f}" text-anchor="middle" '
+            f'font-size="{dim_fsize}" fill="#8a7a3a">{dim}</text>'
         )
     
     # Plot dimensions (bottom)

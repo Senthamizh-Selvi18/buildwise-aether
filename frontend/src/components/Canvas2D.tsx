@@ -1,4 +1,4 @@
-// frontend/src/components/Canvas2D.tsx
+
 import React from 'react';
 
 export const Canvas2D: React.FC<{ floorPlan: any }> = ({ floorPlan }) => {
