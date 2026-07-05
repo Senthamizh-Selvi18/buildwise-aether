@@ -1089,58 +1089,87 @@ export default function App() {
           >
             <span>🖌️</span> Chromatic Multiplier Index
           </legend>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginTop: '12px' }}>
-            {[
-              {
-                r: 'Living Spaces — Architectural Alabaster',
-                hex: '#FFFDF6',
-                d: 'Maximizes luminance projection across open framing layout zones.',
-              },
-              {
-                r: 'Sleeping Quarters — Slate Velvet',
-                hex: '#F3F8FE',
-                d: 'Formulated to minimize sensory glare metrics across circadian boundaries.',
-              },
-              {
-                r: 'Culinary Suite — Pure Ivory Ceramic',
-                hex: '#FFFDF9',
-                d: 'High cleaning endurance coating optimized for thermal resilience.',
-              },
-              {
-                r: 'Sanitary Enclaves — Satin Vapor',
-                hex: '#F0FBFC',
-                d: 'A clear neutral treatment profile maintaining high balance factors.',
-              },
-            ].map((pt, idx) => (
-              <div
-                key={idx}
-                style={{
-                  display: 'flex',
-                  gap: '14px',
-                  alignItems: 'flex-start',
-                  padding: '16px',
-                  backgroundColor: 'rgba(8,8,10,0.3)',
-                  border: '1px solid rgba(255,255,255,0.01)',
-                  borderRadius: '12px',
-                }}
-              >
-                <div
-                  style={{
-                    width: '24px',
-                    height: '24px',
-                    backgroundColor: pt.hex,
-                    borderRadius: '6px',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    flexShrink: 0,
-                  }}
-                />
-                <div>
-                  <h6 style={{ margin: '0 0 4px 0', fontSize: '13.2px', fontWeight: 600, color: '#FFFFFF' }}>{pt.r}</h6>
-                  <p style={{ margin: 0, fontSize: '11.3px', color: 'var(--text-secondary)', lineHeight: '1.5' }}>{pt.d}</p>
+          {(() => {
+            // ROOT CAUSE of "paint recommendation never changes": this
+            // section used to render a hardcoded array of 4 fake generic
+            // entries (Living Spaces / Sleeping Quarters / Culinary Suite /
+            // Sanitary Enclaves) that never read backendPayload at all --
+            // no matter what the backend computed per room, this UI showed
+            // the exact same 4 lines every time. Fixed to read the real,
+            // per-room, per-project palette from
+            // backendPayload.options.OPTION_A_SPACE.paint_recommendations
+            // (a dict keyed by room name -- see main.py's
+            // _generate_theme_driven_paint_recommendations).
+            const paintRecs = backendPayload?.options?.OPTION_A_SPACE?.paint_recommendations;
+            const entries = paintRecs ? Object.entries(paintRecs) : [];
+
+            if (entries.length === 0) {
+              return (
+                <div className="blueprint-placeholder-state" style={{ padding: '32px' }}>
+                  Awaiting active pipeline run coordinates to compute the chromatic palette.
                 </div>
-              </div>
-            ))}
-          </div>
+              );
+            }
+
+            const themeDetected = (entries[0]?.[1] as any)?.theme_detected;
+
+            return (
+              <>
+                {themeDetected && (
+                  <div style={{
+                    fontSize: '11px', fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)',
+                    letterSpacing: '0.08em', textTransform: 'uppercase', marginTop: '10px',
+                  }}>
+                    Detected theme: <span style={{ color: 'var(--gold-light)' }}>{themeDetected}</span>
+                  </div>
+                )}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginTop: '12px' }}>
+                  {entries.map(([roomKey, pt]: [string, any]) => (
+                    <div
+                      key={roomKey}
+                      style={{
+                        display: 'flex',
+                        gap: '14px',
+                        alignItems: 'flex-start',
+                        padding: '16px',
+                        backgroundColor: 'rgba(8,8,10,0.3)',
+                        border: '1px solid rgba(255,255,255,0.01)',
+                        borderRadius: '12px',
+                      }}
+                    >
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flexShrink: 0 }}>
+                        <div
+                          title={pt.primary?.name}
+                          style={{
+                            width: '24px', height: '24px',
+                            backgroundColor: pt.primary?.hex || '#888',
+                            borderRadius: '6px', border: '1px solid rgba(255,255,255,0.1)',
+                          }}
+                        />
+                        <div
+                          title={pt.accent?.name}
+                          style={{
+                            width: '24px', height: '24px',
+                            backgroundColor: pt.accent?.hex || '#888',
+                            borderRadius: '6px', border: '1px solid rgba(255,255,255,0.1)',
+                          }}
+                        />
+                      </div>
+                      <div>
+                        <h6 style={{ margin: '0 0 4px 0', fontSize: '13.2px', fontWeight: 600, color: '#FFFFFF' }}>
+                          {pt.room_name || roomKey} — {pt.primary?.name}
+                          {pt.accent?.name ? ` / ${pt.accent.name}` : ''}
+                        </h6>
+                        <p style={{ margin: 0, fontSize: '11.3px', color: 'var(--text-secondary)', lineHeight: '1.5' }}>
+                          {pt.rationale}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            );
+          })()}
         </motion.fieldset>
 
         {/* VECTOR BLUEPRINT PRINT EXPORT CHANNEL */}
