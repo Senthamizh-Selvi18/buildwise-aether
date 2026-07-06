@@ -107,8 +107,17 @@ class SVGRenderer:
              area_font: float, show_area: bool)
         """
         pad = min(0.4, room_w * 0.08, room_h * 0.08)
-        avail_w = max(room_w - 2 * pad, 0.6)
-        avail_h = max(room_h - 2 * pad, 0.6)
+        # IMPORTANT: never let the "assumed available space" exceed what the
+        # room actually has. The old code floored avail_w/avail_h at 0.6
+        # unconditionally, which for genuinely small rooms (avail < 0.6)
+        # meant the font was sized for MORE space than truly existed. Since
+        # the label is drawn inside a clip-path matching the room's exact
+        # box, that oversized text was then silently clipped away entirely
+        # -- the room's name would vanish instead of just shrinking. Capping
+        # avail_w/avail_h to the room's real dimensions guarantees the font
+        # is always computed against the space that's actually there.
+        avail_w = min(max(room_w - 2 * pad, 0.6), max(room_w, 0.1))
+        avail_h = min(max(room_h - 2 * pad, 0.6), max(room_h, 0.1))
         cw = SVGRenderer._CHAR_WIDTH_RATIO
         lh = SVGRenderer._LINE_HEIGHT_RATIO
         words = name.split() or [name]
@@ -214,10 +223,18 @@ class SVGRenderer:
             room_clip_id = f"roomClip{idx}"
 
             # Per-room clip-path prevents label bleeding into walls / neighbours
+            # Small safety margin around the clip box: the name font has a
+            # legibility floor (_MIN_FONT) that is applied even if the text
+            # would slightly overflow the room's exact bounds on very small
+            # rooms. Without this margin, that overflow used to be clipped
+            # away entirely -- making the label disappear completely on
+            # small rooms instead of just peeking past the edge a little.
+            clip_pad_x = max(b.width * 0.15, 0.4)
+            clip_pad_y = max(b.height * 0.15, 0.4)
             svg += (
                 f'<clipPath id="{room_clip_id}">'
-                f'<rect x="{b.x1}" y="{b.y1}" '
-                f'width="{b.width}" height="{b.height}"/>'
+                f'<rect x="{b.x1 - clip_pad_x}" y="{b.y1 - clip_pad_y}" '
+                f'width="{b.width + 2 * clip_pad_x}" height="{b.height + 2 * clip_pad_y}"/>'
                 f'</clipPath>'
             )
 
