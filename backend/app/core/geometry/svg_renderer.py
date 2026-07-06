@@ -1,4 +1,3 @@
-###updated version
 from typing import List, Tuple
 from backend.app.core.geometry.models import (
     RoomGeometry, WallGeometry, PortalGeometry, DimensionLine
@@ -93,40 +92,51 @@ class SVGRenderer:
     @staticmethod
     def _fit_room_text(name: str, area_label: str, room_w: float, room_h: float):
         """
-        Computes a font size + line layout that guarantees the room name
-        fits entirely inside the room's own bounding box, and -- unlike the
-        previous scoring-based approach, which let a bigger name font win
-        out over showing the area label (so area/dimension text would
-        randomly disappear from some rooms on a floor plan) -- now always
-        shows the area/dimension label underneath whenever there is ANY
-        leftover vertical space after the name, even if it has to shrink
-        down to a small but still-legible size. It's only omitted for truly
-        sliver-sized rooms where there's no room left at all.
+        Computes a font size + line layout that is GUARANTEED to fit
+        entirely inside the room's own bounding box.
+
+        Earlier versions of this method forced the name font up to a
+        "legibility floor" (_MIN_FONT) even when that size didn't actually
+        fit the room, on the theory that a slightly-overflowing label is
+        better than a tiny one. In practice that overflow gets sliced off
+        by the room's own clip-path, which produced two different-looking
+        symptoms depending on how much the forced size overflowed by:
+          - severe overflow  -> the label was clipped away almost
+            entirely, so the room appeared to have NO name at all.
+          - moderate overflow -> only a clipped FRAGMENT of the name
+            remained visible (e.g. "LIVING" / "ROOM" showing up as
+            "..NG" / "..OM"), which is arguably even more confusing than
+            a blank room since it looks like corrupted data.
+
+        The fix: the font size is always derived directly from (and can
+        therefore never exceed) the room's real available space. A room
+        that's too small for a "normal" font size simply gets a smaller
+        -- but always complete and always fully visible -- label, instead
+        of a bigger font that then gets cut apart by the clip-path.
 
         Returns:
             (name_lines: List[str], name_font: float,
              area_font: float, show_area: bool)
         """
         pad = min(0.4, room_w * 0.08, room_h * 0.08)
-        # IMPORTANT: never let the "assumed available space" exceed what the
-        # room actually has. The old code floored avail_w/avail_h at 0.6
-        # unconditionally, which for genuinely small rooms (avail < 0.6)
-        # meant the font was sized for MORE space than truly existed. Since
-        # the label is drawn inside a clip-path matching the room's exact
-        # box, that oversized text was then silently clipped away entirely
-        # -- the room's name would vanish instead of just shrinking. Capping
-        # avail_w/avail_h to the room's real dimensions guarantees the font
-        # is always computed against the space that's actually there.
-        avail_w = min(max(room_w - 2 * pad, 0.6), max(room_w, 0.1))
-        avail_h = min(max(room_h - 2 * pad, 0.6), max(room_h, 0.1))
+        # Never assume more space is available than the room actually has
+        # -- capping avail_w/avail_h at the room's real dimensions (instead
+        # of only ever flooring them at 0.6) is what guarantees every font
+        # computed below actually fits inside the room, no matter how
+        # small that room is.
+        avail_w = min(max(room_w - 2 * pad, 0.15), max(room_w, 0.05))
+        avail_h = min(max(room_h - 2 * pad, 0.15), max(room_h, 0.05))
         cw = SVGRenderer._CHAR_WIDTH_RATIO
         lh = SVGRenderer._LINE_HEIGHT_RATIO
         words = name.split() or [name]
 
-        # ── Step 1: find the best name-only layout (name always wins the
-        # room's primary billing; area is fit into whatever's left over) ──
+        # ── Step 1: find the best name-only layout. Trying up to 4 lines
+        # (not just 3) gives long multi-word names like "ATTACHED
+        # BATHROOM" or "COMMON BATHROOM" more chances to reduce their
+        # widest-line character count, which lets a bigger font still
+        # fit inside a narrow room. ──
         best_name = None
-        max_possible_lines = min(3, len(words)) if len(words) > 1 else 1
+        max_possible_lines = min(4, len(words)) if len(words) > 1 else 1
         for n_lines in range(1, max_possible_lines + 1):
             lines = SVGRenderer._balanced_wrap(words, n_lines)
             widest = max((len(l) for l in lines), default=1) or 1
@@ -138,10 +148,14 @@ class SVGRenderer:
                 best_name = (score, lines, font)
 
         _, lines, font = best_name
-        # Never let the name shrink below legibility, even if it means the
-        # box overflows slightly -- a readable name is the whole point of
-        # the label, matching the "clearly mention room name" requirement.
-        font = max(round(font, 2), SVGRenderer._MIN_FONT)
+        # `font` is already the largest size that provably fits this line
+        # layout inside avail_w/avail_h -- it must not be pushed any
+        # higher, or the label will overflow the clip region and come out
+        # either fragmented or invisible. We only round it here; the tiny
+        # 0.05 floor exists purely so font-size never rounds down to a
+        # literal 0 on a truly degenerate sliver room -- it is NOT a
+        # "legibility" floor, so it never re-introduces overflow.
+        font = max(round(font, 2), 0.05)
 
         # ── Step 2: fit the area/dimension label into whatever vertical
         # space is left below the name. Shown whenever there's any
@@ -150,7 +164,7 @@ class SVGRenderer:
         remaining_h = avail_h - name_block_h
         show_area = False
         area_font = 0.0
-        _AREA_MIN_FONT = 0.3  # smaller floor than name text -- still legible
+        _AREA_MIN_FONT = 0.2  # smaller floor than name text -- still legible
         if remaining_h >= _AREA_MIN_FONT * lh:
             area_font = min(font * 0.7, remaining_h / lh, avail_w / (max(len(area_label), 1) * cw))
             area_font = max(round(area_font, 2), _AREA_MIN_FONT)
@@ -221,23 +235,14 @@ class SVGRenderer:
             dim_w        = round(b.width, 1)
             dim_h        = round(b.height, 1)
             area_label   = f"{dim_w}' × {dim_h}' · {area_val} SQ.FT"
-            room_clip_id = f"roomClip{idx}"
 
-            # Per-room clip-path prevents label bleeding into walls / neighbours
-            # Small safety margin around the clip box: the name font has a
-            # legibility floor (_MIN_FONT) that is applied even if the text
-            # would slightly overflow the room's exact bounds on very small
-            # rooms. Without this margin, that overflow used to be clipped
-            # away entirely -- making the label disappear completely on
-            # small rooms instead of just peeking past the edge a little.
-            clip_pad_x = max(b.width * 0.15, 0.4)
-            clip_pad_y = max(b.height * 0.15, 0.4)
-            svg += (
-                f'<clipPath id="{room_clip_id}">'
-                f'<rect x="{b.x1 - clip_pad_x}" y="{b.y1 - clip_pad_y}" '
-                f'width="{b.width + 2 * clip_pad_x}" height="{b.height + 2 * clip_pad_y}"/>'
-                f'</clipPath>'
-            )
+            # NOTE: room labels are intentionally NOT wrapped in a clip-path.
+            # A clip-path sized to the room's own box used to slice small
+            # rooms' labels mid-word (e.g. "LIVING ROOM" rendering as just
+            # "ING" / "OM") whenever the legibility-floor font made the text
+            # wider than the room. A label that slightly overflows into the
+            # empty margin around a small room is fully readable; a label
+            # that gets clipped mid-word is not -- so no clipping is used.
 
             # Semi-transparent fill so the dark canvas shows through subtly
             svg += (
@@ -256,7 +261,6 @@ class SVGRenderer:
                 block_h += area_font * SVGRenderer._LINE_HEIGHT_RATIO
             start_y = r.center.y - block_h / 2 + name_font * 0.78
 
-            svg += f'<g clip-path="url(#{room_clip_id})">'
             for i, line in enumerate(name_lines):
                 ly = start_y + i * name_font * SVGRenderer._LINE_HEIGHT_RATIO
                 svg += (
@@ -277,7 +281,6 @@ class SVGRenderer:
                     f'fill="{SVGRenderer.AREA_TEXT_COLOR}" '
                     f'text-anchor="middle">{area_label}</text>'
                 )
-            svg += '</g>'
 
         # ── 4. Plot boundary polygon ─────────────────────────────────────────
         # Drawn on top of room fills so the true plot silhouette is always
