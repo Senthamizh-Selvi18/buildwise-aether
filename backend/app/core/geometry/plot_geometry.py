@@ -1,26 +1,9 @@
-"""
-backend/app/core/geometry/plot_geometry.py
-
-Builds the actual buildable PLOT OUTLINE (rectangle OR irregular polygon --
-L-shape, T-shape, U-shape, corner-cut, or a fully custom user-supplied
-polygon) and decomposes it into axis-aligned rectangles that the rest of
-the pipeline (RoomAllocator's BSP) can allocate rooms into.
-
-This is what makes the engine handle non-rectangular plots: instead of
-always assuming a single plot_width x plot_depth rectangle, every floor is
-generated from a PlotShape polygon. A plain rectangle is just the simplest
-possible PlotShape, so nothing about existing rectangular-plot behaviour
-changes -- irregular shapes are strictly additive.
-"""
-
 from typing import List, Optional, Tuple
 from backend.app.core.geometry.models import Point, PlotShape, BoundingBox
 
 
 class PlotShapeBuilder:
     TOLERANCE = 1e-6
-
-    # ── Public entry point ──────────────────────────────────────────
 
     @staticmethod
     def build(
@@ -31,18 +14,6 @@ class PlotShapeBuilder:
         cut_depth: Optional[float] = None,
         custom_points: Optional[List[Tuple[float, float]]] = None,
     ) -> PlotShape:
-        """
-        Builds a PlotShape polygon.
-
-        - custom_points (if provided, 3+ points): the plot is exactly the
-          polygon the user/front-end supplied -- supports ANY irregular
-          shape, not just the named presets below.
-        - shape_type presets ("rectangle" | "l_shape" | "t_shape" |
-          "u_shape" | "corner_cut"): generated from plot_width/plot_depth
-          plus an optional notch size (cut_width / cut_depth).
-        - Anything unrecognised safely falls back to "rectangle" so the
-          pipeline never breaks on a typo or unsupported value.
-        """
         if custom_points and len(custom_points) >= 3:
             pts = [Point(float(x), float(y)) for x, y in custom_points]
             pts = PlotShapeBuilder._dedupe_closing_point(pts)
@@ -51,15 +22,12 @@ class PlotShapeBuilder:
         shape_type = (shape_type or "rectangle").lower().strip().replace(" ", "_").replace("-", "_")
         w, d = float(plot_width), float(plot_depth)
 
-        # Sensible default notch size if the caller didn't specify one,
-        # always leaving at least 6ft of usable span on every side.
         cw = float(cut_width) if cut_width else min(w * 0.35, max(w - 6.0, 4.0))
         cd = float(cut_depth) if cut_depth else min(d * 0.35, max(d - 6.0, 4.0))
         cw = max(4.0, min(cw, w - 6.0)) if w > 10 else w * 0.3
         cd = max(4.0, min(cd, d - 6.0)) if d > 10 else d * 0.3
 
         if shape_type in ("l_shape", "l", "corner_cut", "lshaped"):
-            # Notch removed from the bottom-right corner -> classic L plot.
             pts = [
                 Point(0, 0), Point(w - cw, 0), Point(w - cw, d - cd),
                 Point(w, d - cd), Point(w, d), Point(0, d),
@@ -102,8 +70,6 @@ class PlotShapeBuilder:
             return pts[:-1]
         return pts
 
-    # ── Point-in-polygon (ray casting) ──────────────────────────────
-
     @staticmethod
     def _point_in_polygon(px: float, py: float, polygon: List[Point]) -> bool:
         n = len(polygon)
@@ -118,21 +84,8 @@ class PlotShapeBuilder:
             j = i
         return inside
 
-    # ── Decompose polygon into rectangles for the BSP allocator ────
-
     @staticmethod
     def decompose(shape: PlotShape) -> List[BoundingBox]:
-        """
-        Splits the (possibly irregular) plot polygon into the minimum
-        practical set of axis-aligned rectangles that, combined, cover
-        exactly the buildable area -- never crossing the plot boundary.
-
-        Works for any simple polygon: rectilinear shapes (L/T/U/corner-cut)
-        decompose exactly; polygons with diagonal edges are covered by the
-        largest axis-aligned rectangles that stay strictly inside the
-        boundary (the true diagonal edge is still drawn exactly by the
-        wall generator -- only the *room grid* is approximated).
-        """
         polygon = shape.polygon
         xs = sorted(set(round(p.x, 4) for p in polygon))
         ys = sorted(set(round(p.y, 4) for p in polygon))
@@ -150,7 +103,6 @@ class PlotShapeBuilder:
                 cx = (xs[c] + xs[c + 1]) / 2.0
                 grid[r][c] = PlotShapeBuilder._point_in_polygon(cx, cy, polygon)
 
-        # 1. Merge each row into maximal horizontal strips.
         row_rects: List[List[BoundingBox]] = []
         for r in range(n_rows):
             strips: List[BoundingBox] = []
@@ -165,10 +117,6 @@ class PlotShapeBuilder:
                 strips.append(BoundingBox(x1=xs[start], y1=ys[r], x2=xs[c], y2=ys[r + 1]))
             row_rects.append(strips)
 
-        # 2. Vertically merge strips across consecutive rows that share the
-        #    exact same x-extent, collapsing the grid into the minimum
-        #    practical number of rectangles (an L-shape -> 2 rectangles,
-        #    a plain rectangle -> 1, etc).
         merged: List[BoundingBox] = []
         consumed = [[False] * len(row_rects[r]) for r in range(n_rows)]
 
@@ -199,22 +147,12 @@ class PlotShapeBuilder:
             return [shape.bounding_box]
         return merged
 
-    # ── Boundary helpers (used by wall/door/window generators) ─────
-
     @staticmethod
     def boundary_segments(shape: PlotShape) -> List[Tuple[float, float, float, float]]:
-        """Ordered list of (x1, y1, x2, y2) plot-perimeter edges."""
         return [(p1.x, p1.y, p2.x, p2.y) for p1, p2 in shape.edges]
 
     @staticmethod
     def entrance_segment(shape: PlotShape) -> Tuple[float, float, float, float]:
-        """
-        Picks the entrance (front) wall: the south-most (largest average y)
-        horizontal boundary segment, matching the original convention of
-        placing the main door on the bottom exterior wall. Falls back to
-        the longest segment if no horizontal one exists (e.g. a rotated
-        custom polygon).
-        """
         segs = PlotShapeBuilder.boundary_segments(shape)
         horizontals = [s for s in segs if abs(s[1] - s[3]) < PlotShapeBuilder.TOLERANCE and abs(s[0] - s[2]) >= 3.0]
         if horizontals:

@@ -569,6 +569,17 @@ class GeometryEngine:
             "columns": [],
             "has_balcony": balcony_on_this_floor,
             "svg_dump": svg_string,
+            # Per-floor plot envelope, in the exact shape CADBlueprint.tsx
+            # reads for its "PLOT: {w}' × {d}'" header (dims?.plot_width_ft /
+            # dims?.plot_depth_ft). Without this, the frontend silently fell
+            # back to its own hardcoded 30x40 default on every floor, which
+            # only happened to look right for a 30x40 plot -- any other
+            # dynamic plot size would show the wrong number in the header
+            # even though the SVG itself was already geometrically correct.
+            "dimensions_data": {
+                "plot_width_ft": plot_w,
+                "plot_depth_ft": plot_d,
+            },
             "_dimensions_raw": dimensions,
         }
 

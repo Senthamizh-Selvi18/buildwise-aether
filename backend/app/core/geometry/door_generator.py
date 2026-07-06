@@ -3,44 +3,14 @@ from backend.app.core.geometry.models import PortalGeometry, AdjacencyEdge, Room
 
 
 class DoorGenerator:
-    """
-    Generates door portals based on the Adjacency Graph -- but unlike a naive
-    "one door per shared wall" approach, this applies real circulation rules
-    so doors only go where a door architecturally belongs:
-
-      - Every room gets connected to the circulation network (living/hall/
-        dining/corridor/entrance/staircase), not directly to *every* room
-        it happens to share a wall with.
-      - A fixed whitelist of direct-connect pairs (bedroom<->ensuite
-        bathroom, kitchen<->dining, kitchen<->utility, stair<->living,
-        parking<->entrance, etc.) is allowed to bypass the circulation rule,
-        because those connections are architecturally normal.
-      - Anything else (bedroom-to-bedroom, bathroom-to-bathroom, parking-to-
-        pooja, ...) does NOT get a door, even if the rooms happen to share a
-        wall segment long enough to fit one.
-      - A fallback pass guarantees no room is left completely sealed off: if
-        a room ended up with zero doors after the rules above, it gets
-        connected to its single longest shared wall so it's still reachable.
-
-    The main entrance door is now placed on the plot's actual entrance
-    boundary segment (front wall), supplied by the caller via
-    PlotShapeBuilder.entrance_segment(), instead of always assuming a
-    rectangular plot with the front wall at y=plot_depth. This makes the
-    entrance placement correct for L-shaped / T-shaped / U-shaped / custom
-    irregular plots too.
-    """
     STANDARD_DOOR_WIDTH = 3.0
-    WALL_CLEARANCE = 0.5  # Minimum distance from a corner
+    WALL_CLEARANCE = 0.5
 
-    # Rooms that act as circulation hubs. Most private rooms should connect
-    # to one of these, not directly to each other.
     CIRCULATION_KEYWORDS = (
         "living", "hall", "dining", "corridor", "foyer", "lounge",
         "family", "entrance", "lobby",
     )
 
-    # Explicit direct-connect pairs that are normal even when neither side
-    # is a circulation space. (keyword_a, keyword_b)
     DIRECT_CONNECT_PAIRS = [
         ("bedroom", "bathroom"), ("master", "bathroom"), ("suite", "bathroom"),
         ("guest", "bathroom"),
@@ -101,7 +71,6 @@ class DoorGenerator:
     def _entrance_door(entrance_segment: Tuple[float, float, float, float]) -> PortalGeometry:
         ex1, ey1, ex2, ey2 = entrance_segment
         if abs(ey1 - ey2) < 1e-6:
-            # Horizontal front wall -- door centered on it.
             cx = (ex1 + ex2) / 2
             d_x1 = cx - (DoorGenerator.STANDARD_DOOR_WIDTH / 2)
             d_x2 = cx + (DoorGenerator.STANDARD_DOOR_WIDTH / 2)
@@ -114,7 +83,6 @@ class DoorGenerator:
                 swing_direction_x=1.0, swing_direction_y=-1.0,
             )
         else:
-            # Vertical front wall (e.g. a custom/rotated polygon).
             cy = (ey1 + ey2) / 2
             d_y1 = cy - (DoorGenerator.STANDARD_DOOR_WIDTH / 2)
             d_y2 = cy + (DoorGenerator.STANDARD_DOOR_WIDTH / 2)
@@ -136,11 +104,8 @@ class DoorGenerator:
         portals: List[PortalGeometry] = []
         name_by_id: Dict[str, str] = {r.id: r.name for r in (rooms or [])}
 
-        # 1. Main entrance door, centered on the plot's actual entrance
-        #    (front) boundary segment.
         portals.append(DoorGenerator._entrance_door(entrance_segment))
 
-        # Only edges long enough to physically fit a door + clearance.
         viable_edges = [
             e for e in interior_edges
             if e.length >= (DoorGenerator.STANDARD_DOOR_WIDTH + DoorGenerator.WALL_CLEARANCE * 2)
@@ -148,24 +113,15 @@ class DoorGenerator:
 
         connected_room_ids: set = set()
 
-        # 2. Rule-based pass: only connect rooms that architecturally should
-        #    have a door between them (circulation hub, or a whitelisted
-        #    direct-connect pair).
         for edge in viable_edges:
             name_a = name_by_id.get(edge.room_a_id, "")
             name_b = name_by_id.get(edge.room_b_id, "")
-            # If we don't have room names (legacy callers), fall back to the
-            # old permissive behaviour rather than silently producing zero
-            # doors.
             if name_by_id and not DoorGenerator._should_connect(name_a, name_b):
                 continue
             portals.append(DoorGenerator._door_for_edge(edge))
             connected_room_ids.add(edge.room_a_id)
             connected_room_ids.add(edge.room_b_id)
 
-        # 3. Fallback pass: guarantee every room is reachable. Any room that
-        #    still has zero doors gets connected via its single longest
-        #    shared wall, so nothing is sealed off by the rules above.
         if rooms:
             for room in rooms:
                 if room.id in connected_room_ids:

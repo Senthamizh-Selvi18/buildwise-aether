@@ -27,13 +27,6 @@ class BoundingBox:
 
 @dataclass
 class PlotShape:
-    """
-    Represents the actual buildable plot outline as a simple polygon
-    (ordered list of vertices, edges implicitly closed from last -> first).
-    A plain rectangle is just a 4-point polygon, so this is a strict
-    superset of the old "plot_width x plot_depth rectangle" model and
-    is fully backward compatible with it.
-    """
     polygon: List[Point]
     shape_type: str = "rectangle"
 
@@ -50,7 +43,6 @@ class PlotShape:
 
     @property
     def area(self) -> float:
-        # Shoelace formula -- exact area of the (possibly irregular) plot.
         n = len(self.polygon)
         total = 0.0
         for i in range(n):
@@ -82,9 +74,6 @@ class RoomGeometry:
 
     @property
     def center(self) -> Point:
-        # NOTE: previously referenced self.width / self.height, which do not
-        # exist on RoomGeometry (only on BoundingBox). Fixed to read through
-        # self.bbox, which is what actually carries width/height.
         return Point(
             x=self.bbox.x1 + (self.bbox.width / 2),
             y=self.bbox.y1 + (self.bbox.height / 2)
@@ -117,14 +106,13 @@ class WallGeometry:
 
 @dataclass
 class PortalGeometry:
-    portal_type: str  # "door" or "window"
+    portal_type: str
     x1: float
     y1: float
     x2: float
     y2: float
     associated_room: str
 
-    # Door-specific attributes for accurate architectural swing arcs
     is_horizontal: bool = True
     hinge_x: Optional[float] = None
     hinge_y: Optional[float] = None

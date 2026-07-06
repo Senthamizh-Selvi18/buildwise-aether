@@ -2,25 +2,10 @@ from typing import List, Tuple
 from backend.app.core.geometry.models import PortalGeometry, RoomGeometry
 
 class WindowGenerator:
-    """
-    Generates window portals along the exterior boundary of the floorplan.
-    Ensures windows are strictly placed on outside walls and avoid overlapping
-    with the main entrance door logic.
-
-    Boundary-aware: instead of assuming a fixed plot_w x plot_d rectangle
-    (checking only y==0 / y==plot_d / x==0 / x==plot_w), each room edge is
-    tested against the actual list of plot perimeter segments. This makes
-    window placement correct for L-shaped / T-shaped / U-shaped / custom
-    irregular plots, where "exterior" walls are not simply the four sides
-    of a bounding box.
-    """
     STANDARD_WINDOW_WIDTH = 4.0
     MIN_WALL_LENGTH = 6.0
     TOLERANCE = 0.1
 
-    # Room types that conventionally do NOT get a standard window:
-    # staircases and lift shafts are enclosed cores, and parking is
-    # typically an open/semi-open structure rather than a windowed room.
     NO_WINDOW_KEYWORDS = ("stair", "lift", "parking", "garage")
 
     @staticmethod
@@ -29,8 +14,6 @@ class WindowGenerator:
         boundary_segments: List[Tuple[float, float, float, float]],
         tol: float,
     ) -> bool:
-        """True if the room edge (ex1,ey1)-(ex2,ey2) is collinear with, and
-        fully contained within, one of the plot's perimeter segments."""
         edge_horizontal = abs(ey1 - ey2) < tol
         edge_vertical = abs(ex1 - ex2) < tol
         for (bx1, by1, bx2, by2) in boundary_segments:
@@ -73,11 +56,10 @@ class WindowGenerator:
             h = b.height
 
             candidate_edges = [
-                # (is_horizontal, x1, y1, x2, y2, mid)
-                (True,  b.x1, b.y1, b.x2, b.y1, (b.x1 + b.x2) / 2),  # top edge
-                (True,  b.x1, b.y2, b.x2, b.y2, (b.x1 + b.x2) / 2),  # bottom edge
-                (False, b.x1, b.y1, b.x1, b.y2, (b.y1 + b.y2) / 2),  # left edge
-                (False, b.x2, b.y1, b.x2, b.y2, (b.y1 + b.y2) / 2),  # right edge
+                (True,  b.x1, b.y1, b.x2, b.y1, (b.x1 + b.x2) / 2),
+                (True,  b.x1, b.y2, b.x2, b.y2, (b.x1 + b.x2) / 2),
+                (False, b.x1, b.y1, b.x1, b.y2, (b.y1 + b.y2) / 2),
+                (False, b.x2, b.y1, b.x2, b.y2, (b.y1 + b.y2) / 2),
             ]
 
             for is_horizontal, ex1, ey1, ex2, ey2, mid in candidate_edges:
