@@ -1141,7 +1141,12 @@ def engine_status():
             else "generate_layered" if ThemePaintEngine is not None and hasattr(ThemePaintEngine, "generate_layered")
             else None
         ),
-        "floorplan_svg_source": "always regenerated in-app via _generate_professional_svg (external engine's own svg_dump is ignored)",
+        "floorplan_svg_source": (
+            "GeometryEngine's own svg_dump (real walls/doors/windows/dimensions/compass) "
+            "when real_geometry_engine_active is true; falls back to the simpler "
+            "in-app _generate_professional_svg (rooms only, no walls/doors/windows) "
+            "only when GeometryEngine failed to import."
+        ),
     }
 
 
@@ -1389,18 +1394,24 @@ async def generate_floorplan(request: GenerationRequest):
                 doors = [p for p in fd["portals"] if p["type"] == "door"]
                 windows = [p for p in fd["portals"] if p["type"] == "window"]
 
-                # The external GeometryEngine's own svg_dump is confirmed
-                # (via /api/debug/engine-status showing real_geometry_engine_active
-                # = true, plus CADBlueprint.tsx rendering svg_dump verbatim
-                # with no client-side label overlay) to be the actual
-                # source of the duplicated/oversized room-name text -- that
-                # bug lives inside a module this codebase imports but does
-                # not contain. Rather than trust it, we regenerate the SVG
-                # ourselves from the same room/plot data using
-                # _generate_professional_svg, which is shape-agnostic (see
-                # _normalize_room_for_svg) and draws each room's name +
-                # dimensions exactly once, correctly sized.
-                svg_dump = _generate_professional_svg(fd["rooms"], plot_w, plot_d, floor_idx)
+                # PREVIOUSLY: this line discarded GeometryEngine's own
+                # svg_dump and regenerated a much simpler SVG from
+                # fd["rooms"] alone via _generate_professional_svg(). That
+                # function only ever receives room rectangles -- no walls,
+                # no doors, no windows, no dimension lines -- so it can only
+                # draw plain colour-coded boxes on a plain rectangle border.
+                # That mismatch (real engine computes full CAD geometry, but
+                # main.py threw away the one rendering of it that actually
+                # used that geometry) is exactly why the frontend kept
+                # showing boxy floor plans with no walls/doors/windows/
+                # dimension arrows/compass, even after GeometryEngine and
+                # SVGRenderer were confirmed correct in isolation.
+                #
+                # Fix: use the svg_dump GeometryEngine already rendered from
+                # the real walls/portals/dimensions for this floor (fd
+                # already carries "svg_dump" -- see
+                # GeometryEngine._build_floor_dict / SVGRenderer.render()).
+                svg_dump = fd["svg_dump"]
 
                 out_floors.append({
                     "floor_name": fd["floor_name"],
