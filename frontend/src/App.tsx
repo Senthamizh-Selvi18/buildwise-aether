@@ -94,6 +94,97 @@ const MagneticActionButton = ({
   );
 };
 
+// ── Mobile-responsive rules for the spots that used fixed inline styles
+// (grid columns, hero font size/padding, cost table width). Inline style
+// objects can't hold @media queries, so those sections never adapted to
+// phone widths before — this is what was causing the horizontal overflow
+// / cut-off text and the paint + comparison cards staying side-by-side
+// on narrow screens.
+const AetherResponsiveStyles = () => (
+  <style>{`
+    html, body {
+      overflow-x: hidden;
+      max-width: 100%;
+    }
+
+    .aether-responsive-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    @media (max-width: 768px) {
+      .aether-responsive-grid {
+        grid-template-columns: 1fr;
+        gap: 14px;
+      }
+    }
+
+    .aether-hero-section {
+      padding-top: 160px;
+      padding-bottom: 100px;
+      padding-left: 16px;
+      padding-right: 16px;
+    }
+    @media (max-width: 768px) {
+      .aether-hero-section {
+        padding-top: 90px;
+        padding-bottom: 56px;
+      }
+    }
+    @media (max-width: 480px) {
+      .aether-hero-section {
+        padding-top: 64px;
+        padding-bottom: 40px;
+      }
+    }
+
+    .aether-hero-title {
+      font-size: 56px;
+    }
+    @media (max-width: 768px) {
+      .aether-hero-title {
+        font-size: 36px;
+      }
+    }
+    @media (max-width: 480px) {
+      .aether-hero-title {
+        font-size: 28px;
+      }
+    }
+
+    .aether-cost-table-wrapper {
+      width: 100%;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    .aether-cost-table-wrapper table {
+      min-width: 480px;
+    }
+    @media (max-width: 640px) {
+      .aether-cost-table-wrapper table {
+        font-size: 11px;
+      }
+    }
+
+    .studio-content-width {
+      padding-left: 24px;
+      padding-right: 24px;
+    }
+    @media (max-width: 640px) {
+      .studio-content-width {
+        padding-left: 14px;
+        padding-right: 14px;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .blueprint-card-slab {
+        padding: 20px 16px !important;
+      }
+    }
+  `}</style>
+);
+
 export default function App() {
   const [inputText, setInputText] = useState(
     'I need a modern 3BHK house on a 1200 sq ft plot with parking, one pooja room and 2 floors.'
@@ -108,7 +199,6 @@ export default function App() {
   const [qaTextInputs, setQaTextInputs] = useState<Record<string, string>>({});
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
 
-  // Structural References for Automated Camera Routing
   const sectionRefs = {
     hero: useRef<HTMLDivElement>(null),
     input: useRef<HTMLFieldSetElement>(null),
@@ -135,7 +225,6 @@ export default function App() {
     'Compiling CAD vector package blocks...',
   ];
 
-  // Continuous Micro-Drift Animation Sequence for Blueprint Background Grid
   const { scrollY } = useScroll();
   const backgroundSlowDriftY = useTransform(scrollY, [0, 4000], ['0px', '120px']);
 
@@ -161,20 +250,6 @@ export default function App() {
     }, 380);
 
     try {
-      // plot_width / plot_depth / floors_requested are deliberately NOT sent
-      // here. They used to be hardcoded to 30 / 40 / 2 on every request,
-      // which silently overrode whatever the user typed in the prompt or
-      // answered in the clarification Q&A (qaMemory) below -- every
-      // generation came out identical regardless of input. The backend
-      // parses these straight out of user_prompt, or asks for them via
-      // requires_clarification (current_answers carries those answers back).
-      // Points at the deployed FastAPI backend on Render. This USED TO be
-      // hardcoded to http://127.0.0.1:8000/api/generate, which only ever
-      // resolves to "this device" -- it worked while running the frontend
-      // locally next to a local backend, but breaks for the deployed
-      // Vercel site (or anyone else) since there's no backend listening
-      // on their own machine's port 8000. That's what "Failed to fetch"
-      // meant: the browser had nowhere real to send the request.
       const response = await fetch('https://buildwise-aether-backend.onrender.com/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
@@ -202,7 +277,6 @@ export default function App() {
         setBackendPayload(structuralPayload);
         setIsProcessing(false);
 
-        // Automated smooth viewport scroll execution directly to architectural results
         setTimeout(() => {
           if (structuralPayload?.options) {
             sectionRefs.optionA.current?.scrollIntoView({
@@ -227,7 +301,6 @@ export default function App() {
     executeMatrixGeneration(nextAnswers);
   };
 
-  // Shared Entry Viewport Logic Constants
   const viewportFadeSlideInConfig = {
     initial: { opacity: 0, y: 30, filter: 'blur(8px)' },
     whileInView: { opacity: 1, y: 0, filter: 'blur(0px)' },
@@ -240,16 +313,13 @@ export default function App() {
       className="blueprint-viewport-container"
       style={{ backgroundPositionY: backgroundSlowDriftY }}
     >
+      <AetherResponsiveStyles />
       <div className="blueprint-radial-mesh" />
       <div className="blueprint-vignette" />
 
       {/* LUXURY STUDIO HERO CONTAINER */}
-      <section
-        ref={sectionRefs.hero}
-        style={{ textAlign: 'center', paddingTop: '160px', paddingBottom: '100px' }}
-      >
-        <div className="studio-content-width" style={{ maxWidth: '1000px' }}>
-          {/* Architectural System Active Pulse Badge */}
+      <section ref={sectionRefs.hero} className="aether-hero-section" style={{ textAlign: 'center' }}>
+        <div className="studio-content-width" style={{ maxWidth: '1000px', marginInline: 'auto' }}>
           <motion.div
             initial={{ opacity: 0, y: -15 }}
             animate={{ opacity: 1, y: 0 }}
@@ -290,18 +360,7 @@ export default function App() {
             </span>
           </motion.div>
 
-          {/* Main Title Typography Scale */}
-          <h1
-            style={{
-              margin: '0 0 24px 0',
-              fontSize: '56px',
-              fontWeight: 700,
-              fontFamily: 'var(--font-display)',
-              letterSpacing: '-0.02em',
-              lineHeight: 1.15,
-              color: '#FFFFFF',
-            }}
-          >
+          <h1 className="aether-hero-title" style={{ margin: '0 0 24px 0', fontWeight: 700, fontFamily: 'var(--font-display)', letterSpacing: '-0.02em', lineHeight: 1.15, color: '#FFFFFF' }}>
             BUILDWISE{' '}
             <span
               style={{
@@ -314,7 +373,6 @@ export default function App() {
             </span>
           </h1>
 
-          {/* Subtitle Minimal Elements */}
           <motion.p
             initial={{ opacity: 0, y: 15 }}
             animate={{ opacity: 1, y: 0 }}
@@ -374,9 +432,7 @@ export default function App() {
         </div>
       </section>
 
-      {/* PRINCIPAL STUDIO WORKSPACE GRID BOUNDS */}
-      <div className="studio-content-width" style={{ maxWidth: '1200px', paddingBottom: '120px' }}>
-        {/* PREMIUM STRUCTURAL INPUT ELEMENT FORM */}
+      <div className="studio-content-width" style={{ maxWidth: '1200px', marginInline: 'auto', paddingBottom: '120px' }}>
         <motion.fieldset
           ref={sectionRefs.input}
           {...viewportFadeSlideInConfig}
@@ -445,7 +501,6 @@ export default function App() {
             </motion.div>
           )}
 
-          {/* Core Magnetic Execution Core Element */}
           <MagneticActionButton
             onClick={() => executeMatrixGeneration()}
             disabled={isProcessing}
@@ -478,7 +533,6 @@ export default function App() {
           </MagneticActionButton>
         </motion.fieldset>
 
-        {/* COMPREHENSIVE ARCHITECTURAL LOADING SEQUENCE BANNER */}
         <AnimatePresence>
           {isProcessing && (
             <motion.div
@@ -553,7 +607,6 @@ export default function App() {
           )}
         </AnimatePresence>
 
-        {/* REFINEMENT PARAMETERS INPUT CLARIFICATION MATRIX */}
         <AnimatePresence>
           {backendPayload?.requires_clarification && (
             <motion.section
@@ -581,7 +634,6 @@ export default function App() {
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
                 {(() => {
-                  // Map backend field keys → quick-pick options
                   const QUICK_OPTIONS: Record<string, string[]> = {
                     plot_width: ['20 ft', '25 ft', '30 ft', '40 ft', '50 ft', '60 ft'],
                     plot_depth: ['30 ft', '40 ft', '50 ft', '60 ft', '80 ft', '100 ft'],
@@ -616,7 +668,6 @@ export default function App() {
                           {questionText}
                         </p>
 
-                        {/* Quick-pick pills */}
                         {quickOpts.length > 0 && (
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
                             {quickOpts.map((opt) => {
@@ -644,7 +695,6 @@ export default function App() {
                           </div>
                         )}
 
-                        {/* Free-text input */}
                         <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
                           <input
                             type="text"
@@ -691,7 +741,6 @@ export default function App() {
                 })()}
               </div>
 
-              {/* Submit all answers button */}
               <div style={{ marginTop: '28px', display: 'flex', justifyContent: 'flex-end' }}>
                 <MagneticActionButton
                   onClick={() => {
@@ -734,11 +783,6 @@ export default function App() {
           )}
         </AnimatePresence>
 
-        {/* ======================================================================
-            CONTINUOUS UNROLLED DESIGN LAYERS (ALPHA AND BETA SYSTEM SUITES)
-           ====================================================================== */}
-
-        {/* DESIGN SUITE OPTION ALPHA */}
         <div ref={sectionRefs.optionA} style={{ marginTop: '40px' }}>
           <div
             style={{
@@ -764,7 +808,6 @@ export default function App() {
             </h2>
           </div>
 
-          {/* UNROLLED SEGMENT LAYER 01: GROUND FLOORS */}
           <motion.div {...viewportFadeSlideInConfig} style={{ marginBottom: '40px' }}>
             <h3 style={{ fontSize: '15px', fontWeight: 600, fontFamily: 'var(--font-display)', color: 'var(--gold-light)', marginBottom: '14px' }}>
               01 / Ground Level Map Plan
@@ -780,7 +823,6 @@ export default function App() {
             )}
           </motion.div>
 
-          {/* UNROLLED SEGMENT LAYER 02: FIRST FLOORS */}
           <motion.div {...viewportFadeSlideInConfig} style={{ marginBottom: '40px' }}>
             <h3 style={{ fontSize: '15px', fontWeight: 600, fontFamily: 'var(--font-display)', color: 'var(--gold-light)', marginBottom: '14px' }}>
               02 / First Level Map Plan
@@ -796,7 +838,6 @@ export default function App() {
             )}
           </motion.div>
 
-          {/* UNROLLED SEGMENT LAYER 03: SECOND FLOORS */}
           <motion.div {...viewportFadeSlideInConfig} style={{ marginBottom: '40px' }}>
             <h3 style={{ fontSize: '15px', fontWeight: 600, fontFamily: 'var(--font-display)', color: 'var(--gold-light)', marginBottom: '14px' }}>
               03 / Second Level Map Plan
@@ -812,7 +853,6 @@ export default function App() {
             )}
           </motion.div>
 
-          {/* LAYER REVIEWS EVALUATION BLOCK */}
           <motion.div {...viewportFadeSlideInConfig} className="blueprint-card-slab" style={{ marginTop: '24px' }}>
             <h4
               style={{
@@ -837,7 +877,6 @@ export default function App() {
 
         <div className="minimal-gold-divider" />
 
-        {/* DESIGN SUITE OPTION BETA */}
         <div ref={sectionRefs.optionB}>
           <div
             style={{
@@ -863,7 +902,6 @@ export default function App() {
             </h2>
           </div>
 
-          {/* UNROLLED SEGMENT LAYER 01: GROUND FLOORS */}
           <motion.div {...viewportFadeSlideInConfig} style={{ marginBottom: '40px' }}>
             <h3 style={{ fontSize: '15px', fontWeight: 600, fontFamily: 'var(--font-display)', color: 'var(--gold-light)', marginBottom: '14px' }}>
               01 / Ground Level Map Plan
@@ -879,7 +917,6 @@ export default function App() {
             )}
           </motion.div>
 
-          {/* UNROLLED SEGMENT LAYER 02: FIRST FLOORS */}
           <motion.div {...viewportFadeSlideInConfig} style={{ marginBottom: '40px' }}>
             <h3 style={{ fontSize: '15px', fontWeight: 600, fontFamily: 'var(--font-display)', color: 'var(--gold-light)', marginBottom: '14px' }}>
               02 / First Level Map Plan
@@ -895,7 +932,6 @@ export default function App() {
             )}
           </motion.div>
 
-          {/* UNROLLED SEGMENT LAYER 03: SECOND FLOORS */}
           <motion.div {...viewportFadeSlideInConfig} style={{ marginBottom: '40px' }}>
             <h3 style={{ fontSize: '15px', fontWeight: 600, fontFamily: 'var(--font-display)', color: 'var(--gold-light)', marginBottom: '14px' }}>
               03 / Second Level Map Plan
@@ -911,7 +947,6 @@ export default function App() {
             )}
           </motion.div>
 
-          {/* LAYER REVIEWS EVALUATION BLOCK */}
           <motion.div {...viewportFadeSlideInConfig} className="blueprint-card-slab" style={{ marginTop: '24px' }}>
             <h4
               style={{
@@ -936,7 +971,7 @@ export default function App() {
 
         <div className="minimal-gold-divider" />
 
-        {/* COMPARATIVE STRUCTURAL PERFORMANCE FIELDSETS */}
+        {/* COMPARATIVE STRUCTURAL PERFORMANCE FIELDSETS — now stacks on mobile */}
         <motion.fieldset
           ref={sectionRefs.comparison}
           {...viewportFadeSlideInConfig}
@@ -956,7 +991,7 @@ export default function App() {
           >
             <span>🎛️</span> Comparative Clearance Matrix
           </legend>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginTop: '12px' }}>
+          <div className="aether-responsive-grid" style={{ marginTop: '12px' }}>
             <div
               style={{
                 backgroundColor: 'rgba(8,8,10,0.4)',
@@ -1002,7 +1037,7 @@ export default function App() {
           </div>
         </motion.fieldset>
 
-        {/* MATERIAL COST ESTIMATION SUMMARY SPREADSHEETS */}
+        {/* MATERIAL COST ESTIMATION — now horizontally scrollable instead of overflowing the page */}
         <motion.fieldset
           ref={sectionRefs.cost}
           {...viewportFadeSlideInConfig}
@@ -1028,40 +1063,42 @@ export default function App() {
           </p>
 
           {backendPayload?.options?.OPTION_A_SPACE?.cost_estimation ? (
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12.7px' }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid rgba(197, 168, 98, 0.2)', textAlign: 'left', color: 'var(--text-muted)' }}>
-                  <th style={{ paddingBottom: '12px', fontFamily: 'var(--font-mono)', fontSize: '10.3px', letterSpacing: '0.05em' }}>
-                    STRUCTURAL CALCULATED BLOCK
-                  </th>
-                  <th style={{ paddingBottom: '12px', textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: '10.3px', letterSpacing: '0.05em' }}>
-                    VALUATION METRIC (INR)
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {Object.entries(backendPayload.options.OPTION_A_SPACE.cost_estimation.breakdown || {}).map(
-                  ([cKey, cVal]: [string, any], idx) => (
-                    <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
-                      <td style={{ padding: '14px 0', color: 'var(--text-secondary)', textTransform: 'uppercase', fontFamily: 'var(--font-mono)', fontSize: '11.3px' }}>
-                        {cKey.replace(/_/g, ' ')}
-                      </td>
-                      <td style={{ padding: '14px 0', textAlign: 'right', fontFamily: 'var(--font-mono)', fontWeight: 500, color: '#FFFFFF' }}>
-                        ₹<CoreNumericalCounter targetValue={cVal} />
-                      </td>
-                    </tr>
-                  )
-                )}
-                <tr style={{ fontWeight: 700, color: 'var(--gold-core)', fontSize: '14px' }}>
-                  <td style={{ paddingTop: '24px', fontFamily: 'var(--font-display)' }}>
-                    TOTAL CONTRACTED STRUCTURAL ESTIMATE
-                  </td>
-                  <td style={{ paddingTop: '24px', textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: '15px' }}>
-                    {backendPayload.options.OPTION_A_SPACE.cost_estimation.grand_total_inr}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+            <div className="aether-cost-table-wrapper">
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12.7px' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid rgba(197, 168, 98, 0.2)', textAlign: 'left', color: 'var(--text-muted)' }}>
+                    <th style={{ paddingBottom: '12px', fontFamily: 'var(--font-mono)', fontSize: '10.3px', letterSpacing: '0.05em' }}>
+                      STRUCTURAL CALCULATED BLOCK
+                    </th>
+                    <th style={{ paddingBottom: '12px', textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: '10.3px', letterSpacing: '0.05em' }}>
+                      VALUATION METRIC (INR)
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(backendPayload.options.OPTION_A_SPACE.cost_estimation.breakdown || {}).map(
+                    ([cKey, cVal]: [string, any], idx) => (
+                      <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
+                        <td style={{ padding: '14px 0', color: 'var(--text-secondary)', textTransform: 'uppercase', fontFamily: 'var(--font-mono)', fontSize: '11.3px' }}>
+                          {cKey.replace(/_/g, ' ')}
+                        </td>
+                        <td style={{ padding: '14px 0', textAlign: 'right', fontFamily: 'var(--font-mono)', fontWeight: 500, color: '#FFFFFF' }}>
+                          ₹<CoreNumericalCounter targetValue={cVal} />
+                        </td>
+                      </tr>
+                    )
+                  )}
+                  <tr style={{ fontWeight: 700, color: 'var(--gold-core)', fontSize: '14px' }}>
+                    <td style={{ paddingTop: '24px', fontFamily: 'var(--font-display)' }}>
+                      TOTAL CONTRACTED STRUCTURAL ESTIMATE
+                    </td>
+                    <td style={{ paddingTop: '24px', textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: '15px' }}>
+                      {backendPayload.options.OPTION_A_SPACE.cost_estimation.grand_total_inr}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           ) : (
             <div className="blueprint-placeholder-state" style={{ padding: '32px' }}>
               Awaiting active pipeline run coordinates to compute material ledger values.
@@ -1069,7 +1106,7 @@ export default function App() {
           )}
         </motion.fieldset>
 
-        {/* CHROMATIC PAINT TREATMENT SEGMENTS */}
+        {/* CHROMATIC PAINT TREATMENT SEGMENTS — cards now stack on mobile instead of squeezing side-by-side */}
         <motion.fieldset
           ref={sectionRefs.paint}
           {...viewportFadeSlideInConfig}
@@ -1090,16 +1127,6 @@ export default function App() {
             <span>🖌️</span> Chromatic Multiplier Index
           </legend>
           {(() => {
-            // ROOT CAUSE of "paint recommendation never changes": this
-            // section used to render a hardcoded array of 4 fake generic
-            // entries (Living Spaces / Sleeping Quarters / Culinary Suite /
-            // Sanitary Enclaves) that never read backendPayload at all --
-            // no matter what the backend computed per room, this UI showed
-            // the exact same 4 lines every time. Fixed to read the real,
-            // per-room, per-project palette from
-            // backendPayload.options.OPTION_A_SPACE.paint_recommendations
-            // (a dict keyed by room name -- see main.py's
-            // _generate_theme_driven_paint_recommendations).
             const paintRecs = backendPayload?.options?.OPTION_A_SPACE?.paint_recommendations;
             const entries = paintRecs ? Object.entries(paintRecs) : [];
 
@@ -1123,7 +1150,7 @@ export default function App() {
                     Detected theme: <span style={{ color: 'var(--gold-light)' }}>{themeDetected}</span>
                   </div>
                 )}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginTop: '12px' }}>
+                <div className="aether-responsive-grid" style={{ marginTop: '12px' }}>
                   {entries.map(([roomKey, pt]: [string, any]) => (
                     <div
                       key={roomKey}
@@ -1155,7 +1182,7 @@ export default function App() {
                           }}
                         />
                       </div>
-                      <div>
+                      <div style={{ minWidth: 0 }}>
                         <h6 style={{ margin: '0 0 4px 0', fontSize: '13.2px', fontWeight: 600, color: '#FFFFFF' }}>
                           {pt.room_name || roomKey} — {pt.primary?.name}
                           {pt.accent?.name ? ` / ${pt.accent.name}` : ''}
@@ -1172,7 +1199,6 @@ export default function App() {
           })()}
         </motion.fieldset>
 
-        {/* VECTOR BLUEPRINT PRINT EXPORT CHANNEL */}
         <div ref={sectionRefs.download} style={{ textAlign: 'center', marginTop: '64px' }}>
           <h4 style={{ margin: '0 0 6px 0', fontSize: '17px', fontWeight: 600, fontFamily: 'var(--font-display)', color: '#FFFFFF' }}>
             Export Document Vector Matrix
