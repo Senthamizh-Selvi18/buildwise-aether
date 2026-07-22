@@ -94,12 +94,14 @@ const MagneticActionButton = ({
   );
 };
 
-// ── Mobile-responsive rules for the spots that used fixed inline styles
-// (grid columns, hero font size/padding, cost table width). Inline style
-// objects can't hold @media queries, so those sections never adapted to
-// phone widths before — this is what was causing the horizontal overflow
-// / cut-off text and the paint + comparison cards staying side-by-side
-// on narrow screens.
+// ── Mobile-responsive rules. Inline style objects can't hold @media
+// queries, so anything that used raw inline styles for layout (grid
+// columns, hero sizing, the cost table) never adapted to phone widths.
+// The cost table specifically: it used to sit inside a horizontal-scroll
+// wrapper, which technically worked but hid the price column off-screen
+// with no visible scrollbar on mobile, making it LOOK like data had
+// disappeared. Fixed here by making the table restack into label/value
+// blocks per row below 640px instead of requiring horizontal scroll.
 const AetherResponsiveStyles = () => (
   <style>{`
     html, body {
@@ -152,20 +154,6 @@ const AetherResponsiveStyles = () => (
       }
     }
 
-    .aether-cost-table-wrapper {
-      width: 100%;
-      overflow-x: auto;
-      -webkit-overflow-scrolling: touch;
-    }
-    .aether-cost-table-wrapper table {
-      min-width: 480px;
-    }
-    @media (max-width: 640px) {
-      .aether-cost-table-wrapper table {
-        font-size: 11px;
-      }
-    }
-
     .studio-content-width {
       padding-left: 24px;
       padding-right: 24px;
@@ -180,6 +168,47 @@ const AetherResponsiveStyles = () => (
     @media (max-width: 640px) {
       .blueprint-card-slab {
         padding: 20px 16px !important;
+      }
+    }
+
+    .aether-legend-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    /* Cost table: stacks into label/value blocks on mobile instead of
+       scrolling horizontally, so nothing sits hidden off-screen. */
+    @media (max-width: 640px) {
+      .aether-cost-table {
+        font-size: 11px;
+      }
+      .aether-cost-table thead {
+        display: none;
+      }
+      .aether-cost-table,
+      .aether-cost-table tbody,
+      .aether-cost-table tr,
+      .aether-cost-table td {
+        display: block;
+        width: 100%;
+      }
+      .aether-cost-table tr {
+        padding: 10px 0;
+      }
+      .aether-cost-table td {
+        text-align: left !important;
+        padding: 3px 0 !important;
+      }
+      .aether-cost-table td[data-label]::before {
+        content: attr(data-label);
+        display: block;
+        font-size: 9px;
+        letter-spacing: 0.05em;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        margin-bottom: 2px;
       }
     }
   `}</style>
@@ -971,22 +1000,20 @@ export default function App() {
 
         <div className="minimal-gold-divider" />
 
-        {/* COMPARATIVE STRUCTURAL PERFORMANCE FIELDSETS — now stacks on mobile */}
+        {/* COMPARATIVE STRUCTURAL PERFORMANCE FIELDSETS — stacks on mobile */}
         <motion.fieldset
           ref={sectionRefs.comparison}
           {...viewportFadeSlideInConfig}
           className="blueprint-card-slab"
         >
           <legend
+            className="aether-legend-row"
             style={{
               padding: '0 10px',
               fontSize: '18.8px',
               fontWeight: 600,
               fontFamily: 'var(--font-display)',
               color: '#FFFFFF',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '10px',
             }}
           >
             <span>🎛️</span> Comparative Clearance Matrix
@@ -1037,22 +1064,20 @@ export default function App() {
           </div>
         </motion.fieldset>
 
-        {/* MATERIAL COST ESTIMATION — now horizontally scrollable instead of overflowing the page */}
+        {/* MATERIAL COST ESTIMATION — restacks into label/value rows on mobile */}
         <motion.fieldset
           ref={sectionRefs.cost}
           {...viewportFadeSlideInConfig}
           className="blueprint-card-slab"
         >
           <legend
+            className="aether-legend-row"
             style={{
               padding: '0 10px',
               fontSize: '18.8px',
               fontWeight: 600,
               fontFamily: 'var(--font-display)',
               color: '#FFFFFF',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '10px',
             }}
           >
             <span>📊</span> Cost Valuation Spreadsheets
@@ -1063,42 +1088,46 @@ export default function App() {
           </p>
 
           {backendPayload?.options?.OPTION_A_SPACE?.cost_estimation ? (
-            <div className="aether-cost-table-wrapper">
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12.7px' }}>
-                <thead>
-                  <tr style={{ borderBottom: '1px solid rgba(197, 168, 98, 0.2)', textAlign: 'left', color: 'var(--text-muted)' }}>
-                    <th style={{ paddingBottom: '12px', fontFamily: 'var(--font-mono)', fontSize: '10.3px', letterSpacing: '0.05em' }}>
-                      STRUCTURAL CALCULATED BLOCK
-                    </th>
-                    <th style={{ paddingBottom: '12px', textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: '10.3px', letterSpacing: '0.05em' }}>
-                      VALUATION METRIC (INR)
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {Object.entries(backendPayload.options.OPTION_A_SPACE.cost_estimation.breakdown || {}).map(
-                    ([cKey, cVal]: [string, any], idx) => (
-                      <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
-                        <td style={{ padding: '14px 0', color: 'var(--text-secondary)', textTransform: 'uppercase', fontFamily: 'var(--font-mono)', fontSize: '11.3px' }}>
-                          {cKey.replace(/_/g, ' ')}
-                        </td>
-                        <td style={{ padding: '14px 0', textAlign: 'right', fontFamily: 'var(--font-mono)', fontWeight: 500, color: '#FFFFFF' }}>
-                          ₹<CoreNumericalCounter targetValue={cVal} />
-                        </td>
-                      </tr>
-                    )
-                  )}
-                  <tr style={{ fontWeight: 700, color: 'var(--gold-core)', fontSize: '14px' }}>
-                    <td style={{ paddingTop: '24px', fontFamily: 'var(--font-display)' }}>
-                      TOTAL CONTRACTED STRUCTURAL ESTIMATE
-                    </td>
-                    <td style={{ paddingTop: '24px', textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: '15px' }}>
-                      {backendPayload.options.OPTION_A_SPACE.cost_estimation.grand_total_inr}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+            <table className="aether-cost-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12.7px' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid rgba(197, 168, 98, 0.2)', textAlign: 'left', color: 'var(--text-muted)' }}>
+                  <th style={{ paddingBottom: '12px', fontFamily: 'var(--font-mono)', fontSize: '10.3px', letterSpacing: '0.05em' }}>
+                    STRUCTURAL CALCULATED BLOCK
+                  </th>
+                  <th style={{ paddingBottom: '12px', textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: '10.3px', letterSpacing: '0.05em' }}>
+                    VALUATION METRIC (INR)
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(backendPayload.options.OPTION_A_SPACE.cost_estimation.breakdown || {}).map(
+                  ([cKey, cVal]: [string, any], idx) => (
+                    <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
+                      <td
+                        data-label="Block"
+                        style={{ padding: '14px 0', color: 'var(--text-secondary)', textTransform: 'uppercase', fontFamily: 'var(--font-mono)', fontSize: '11.3px' }}
+                      >
+                        {cKey.replace(/_/g, ' ')}
+                      </td>
+                      <td
+                        data-label="Amount (INR)"
+                        style={{ padding: '14px 0', textAlign: 'right', fontFamily: 'var(--font-mono)', fontWeight: 500, color: '#FFFFFF' }}
+                      >
+                        ₹<CoreNumericalCounter targetValue={cVal} />
+                      </td>
+                    </tr>
+                  )
+                )}
+                <tr style={{ fontWeight: 700, color: 'var(--gold-core)', fontSize: '14px' }}>
+                  <td data-label="Total" style={{ paddingTop: '24px', fontFamily: 'var(--font-display)' }}>
+                    TOTAL CONTRACTED STRUCTURAL ESTIMATE
+                  </td>
+                  <td data-label="Amount (INR)" style={{ paddingTop: '24px', textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: '15px' }}>
+                    {backendPayload.options.OPTION_A_SPACE.cost_estimation.grand_total_inr}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           ) : (
             <div className="blueprint-placeholder-state" style={{ padding: '32px' }}>
               Awaiting active pipeline run coordinates to compute material ledger values.
@@ -1106,22 +1135,20 @@ export default function App() {
           )}
         </motion.fieldset>
 
-        {/* CHROMATIC PAINT TREATMENT SEGMENTS — cards now stack on mobile instead of squeezing side-by-side */}
+        {/* CHROMATIC PAINT TREATMENT SEGMENTS — stacks on mobile */}
         <motion.fieldset
           ref={sectionRefs.paint}
           {...viewportFadeSlideInConfig}
           className="blueprint-card-slab"
         >
           <legend
+            className="aether-legend-row"
             style={{
               padding: '0 10px',
               fontSize: '18.8px',
               fontWeight: 600,
               fontFamily: 'var(--font-display)',
               color: '#FFFFFF',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '10px',
             }}
           >
             <span>🖌️</span> Chromatic Multiplier Index
